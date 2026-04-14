@@ -36,3 +36,7 @@ alembic/versions/*.pyc
 # Env
 .env
 .env.example
+
+# Celery
+celerybeat-schedule
+celerybeat-schedule.db
