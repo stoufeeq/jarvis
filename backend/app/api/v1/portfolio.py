@@ -1,0 +1,197 @@
+from fastapi import APIRouter, Depends, UploadFile
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import get_current_user
+from app.core.exceptions import ForbiddenError, NotFoundError
+from app.database import get_db
+from app.models.portfolio import Trade
+from app.models.user import User
+from app.schemas.portfolio import (
+    PortfolioCreate,
+    PortfolioRead,
+    PortfolioSummary,
+    PortfolioUpdate,
+    PositionRead,
+    TradeCreate,
+    TradeRead,
+    TradeUpdate,
+)
+from app.services.portfolio import PortfolioService
+
+router = APIRouter(prefix="/portfolios", tags=["portfolio"])
+
+
+def _assert_owner(portfolio, user: User):
+    if portfolio.user_id != user.id:
+        raise ForbiddenError()
+
+
+@router.get("/", response_model=list[PortfolioSummary])
+async def list_portfolios(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    svc = PortfolioService(db)
+    portfolios = await svc.list_for_user(user.id)
+    return [await svc.get_summary(p) for p in portfolios]
+
+
+@router.post("/", response_model=PortfolioRead, status_code=201)
+async def create_portfolio(
+    payload: PortfolioCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await PortfolioService(db).create(user.id, payload)
+
+
+@router.get("/{portfolio_id}", response_model=PortfolioSummary)
+async def get_portfolio(
+    portfolio_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    svc = PortfolioService(db)
+    p = await svc.get(portfolio_id)
+    if not p:
+        raise NotFoundError("Portfolio not found")
+    _assert_owner(p, user)
+    return await svc.get_summary(p)
+
+
+@router.patch("/{portfolio_id}", response_model=PortfolioRead)
+async def update_portfolio(
+    portfolio_id: int,
+    payload: PortfolioUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    svc = PortfolioService(db)
+    p = await svc.get(portfolio_id)
+    if not p:
+        raise NotFoundError("Portfolio not found")
+    _assert_owner(p, user)
+    return await svc.update(p, payload)
+
+
+@router.delete("/{portfolio_id}", status_code=204)
+async def delete_portfolio(
+    portfolio_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    svc = PortfolioService(db)
+    p = await svc.get(portfolio_id)
+    if not p:
+        raise NotFoundError("Portfolio not found")
+    _assert_owner(p, user)
+    await svc.delete(p)
+
+
+# ── Positions ────────────────────────────────────────────────────────────────
+
+@router.get("/{portfolio_id}/positions", response_model=list[PositionRead])
+async def list_positions(
+    portfolio_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    svc = PortfolioService(db)
+    p = await svc.get(portfolio_id)
+    if not p:
+        raise NotFoundError("Portfolio not found")
+    _assert_owner(p, user)
+    return await svc.list_positions(portfolio_id)
+
+
+# ── Trades ───────────────────────────────────────────────────────────────────
+
+@router.get("/{portfolio_id}/trades", response_model=list[TradeRead])
+async def list_trades(
+    portfolio_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    svc = PortfolioService(db)
+    p = await svc.get(portfolio_id)
+    if not p:
+        raise NotFoundError("Portfolio not found")
+    _assert_owner(p, user)
+    return await svc.list_trades(portfolio_id)
+
+
+@router.post("/{portfolio_id}/trades", response_model=TradeRead, status_code=201)
+async def add_trade(
+    portfolio_id: int,
+    payload: TradeCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    svc = PortfolioService(db)
+    p = await svc.get(portfolio_id)
+    if not p:
+        raise NotFoundError("Portfolio not found")
+    _assert_owner(p, user)
+    return await svc.add_trade(portfolio_id, payload)
+
+
+@router.patch("/{portfolio_id}/trades/{trade_id}", response_model=TradeRead)
+async def update_trade(
+    portfolio_id: int,
+    trade_id: int,
+    payload: TradeUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    svc = PortfolioService(db)
+    p = await svc.get(portfolio_id)
+    if not p:
+        raise NotFoundError("Portfolio not found")
+    _assert_owner(p, user)
+    result = await db.execute(
+        select(Trade).where(Trade.id == trade_id, Trade.portfolio_id == portfolio_id)
+    )
+    trade = result.scalar_one_or_none()
+    if not trade:
+        raise NotFoundError("Trade not found")
+    return await svc.update_trade(trade, payload)
+
+
+@router.delete("/{portfolio_id}/trades/{trade_id}", status_code=204)
+async def delete_trade(
+    portfolio_id: int,
+    trade_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    svc = PortfolioService(db)
+    p = await svc.get(portfolio_id)
+    if not p:
+        raise NotFoundError("Portfolio not found")
+    _assert_owner(p, user)
+    result = await db.execute(
+        select(Trade).where(Trade.id == trade_id, Trade.portfolio_id == portfolio_id)
+    )
+    trade = result.scalar_one_or_none()
+    if not trade:
+        raise NotFoundError("Trade not found")
+    await svc.delete_trade(trade)
+
+
+@router.post("/{portfolio_id}/import-csv", status_code=202)
+async def import_csv(
+    portfolio_id: int,
+    file: UploadFile,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Import trades from an IBKR-format CSV export."""
+    svc = PortfolioService(db)
+    p = await svc.get(portfolio_id)
+    if not p:
+        raise NotFoundError("Portfolio not found")
+    _assert_owner(p, user)
+    content = await file.read()
+    count = await svc.import_from_csv(portfolio_id, content)
+    return {"imported": count}
