@@ -185,6 +185,10 @@ function SignalRow({ signal }: { signal: Signal }) {
               <span className="text-xs text-muted-foreground">{signal.timeframe}</span>
             )}
           </div>
+          {/* One-line summary — always visible */}
+          {signal.rationale && (
+            <p className="text-sm text-muted-foreground mt-1 truncate">{signal.rationale}</p>
+          )}
           {/* Entry / SL / TP — always visible */}
           {signal.entry_price && (
             <div className="flex gap-4 text-xs mt-1">
@@ -199,14 +203,14 @@ function SignalRow({ signal }: { signal: Signal }) {
         />
       </div>
 
-      {/* Expanded — rationale + indicators */}
+      {/* Expanded — full rationale + indicators */}
       {expanded && (
         <div className="mt-3 pt-3 border-t border-border space-y-1.5">
           {signal.rationale && (
             <p className="text-sm text-muted-foreground">{signal.rationale}</p>
           )}
           {signal.indicators && (
-            <p className="text-xs text-muted-foreground/60 font-mono">{signal.indicators}</p>
+            <p className="text-xs text-muted-foreground/60 font-mono mt-1">{signal.indicators}</p>
           )}
         </div>
       )}
