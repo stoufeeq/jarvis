@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { accountsApi } from "@/lib/api";
-import { formatCurrency, formatPct, pnlColor } from "@/lib/utils";
+import { formatCurrency } from "@/lib/utils";
 import { useCurrencyDisplay } from "@/hooks/useCurrencyDisplay";
 import { CurrencySwitcher } from "@/components/ui/CurrencySwitcher";
 import { usePrivacyStore } from "@/store/privacy";
@@ -11,8 +11,7 @@ import { PrivacyToggle } from "@/components/ui/PrivacyToggle";
 import type { Account, AccountDetail, AccountTransaction } from "@/types";
 import toast from "react-hot-toast";
 
-const MASK = "••••••";
-const CURRENCIES = ["USD", "GBP", "EUR", "JPY", "CAD", "AUD", "CHF", "SGD", "HKD", "NOK", "SEK", "DKK"];
+const CURRENCIES =["USD", "GBP", "EUR", "JPY", "CAD", "AUD", "CHF", "SGD", "HKD", "NOK", "SEK", "DKK"];
 
 export default function AccountsPage() {
   const qc = useQueryClient();
@@ -33,15 +32,6 @@ export default function AccountsPage() {
     queryFn: () => accountsApi.get(selectedAccountId!).then((r) => r.data),
     enabled: !!selectedAccountId,
   });
-
-  const mv = (val: string) => (isPrivate ? MASK : val);
-
-  // Total liquidity across all accounts in display currency
-  const totalLiquidity = accounts.reduce((sum, acct) => {
-    // Use balances, assuming USD equivalent for simplicity in the header card
-    // Real FX conversion handled by the liquidity endpoint on dashboard
-    return sum + acct.balances.reduce((s, b) => s + (b.currency === "USD" ? b.balance : 0), 0);
-  }, 0);
 
   return (
     <div className="space-y-6">
@@ -159,7 +149,7 @@ function AccountCard({
 }: {
   account: Account;
   isPrivate: boolean;
-  convert: (v: number, from?: string) => number;
+  convert: (v: number | null | undefined) => number | null;
   displayCurrency: string;
   onSelect: () => void;
   selected: boolean;
