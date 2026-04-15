@@ -1,0 +1,108 @@
+name: Build and Deploy to Azure
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  ACR: jarvisapp88b2b8.azurecr.io
+  RESOURCE_GROUP: jarvis
+
+jobs:
+  # ─── Backend ────────────────────────────────────────────────────────────────
+  build-backend:
+    name: Build backend image
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Log in to ACR
+        run: az acr login --name jarvisapp88b2b8
+
+      - name: Build and push backend
+        id: push
+        run: |
+          IMAGE=$ACR/jarvis-backend
+          docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:latest ./backend
+          docker push $IMAGE:${{ github.sha }}
+          docker push $IMAGE:latest
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' $IMAGE:${{ github.sha }} | cut -d@ -f2)
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+
+  # ─── Frontend ───────────────────────────────────────────────────────────────
+  build-frontend:
+    name: Build frontend image
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Log in to ACR
+        run: az acr login --name jarvisapp88b2b8
+
+      - name: Build and push frontend
+        id: push
+        run: |
+          IMAGE=$ACR/jarvis-frontend
+          docker build \
+            --build-arg NEXT_PUBLIC_API_URL=https://jarvis-api.mangopebble-9811b33d.eastus2.azurecontainerapps.io \
+            -t $IMAGE:${{ github.sha }} \
+            -t $IMAGE:latest \
+            ./frontend
+          docker push $IMAGE:${{ github.sha }}
+          docker push $IMAGE:latest
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' $IMAGE:${{ github.sha }} | cut -d@ -f2)
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+
+  # ─── Deploy ─────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to Azure Container Apps
+    runs-on: ubuntu-latest
+    needs: [build-backend, build-frontend]
+    steps:
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy backend (api)
+        run: |
+          az containerapp update \
+            --name jarvis-api \
+            --resource-group $RESOURCE_GROUP \
+            --image $ACR/jarvis-backend:${{ github.sha }}
+
+      - name: Deploy backend (worker)
+        run: |
+          az containerapp update \
+            --name jarvis-worker \
+            --resource-group $RESOURCE_GROUP \
+            --image $ACR/jarvis-backend:${{ github.sha }}
+
+      - name: Deploy backend (beat)
+        run: |
+          az containerapp update \
+            --name jarvis-beat \
+            --resource-group $RESOURCE_GROUP \
+            --image $ACR/jarvis-backend:${{ github.sha }}
+
+      - name: Deploy frontend
+        run: |
+          az containerapp update \
+            --name jarvis-app \
+            --resource-group $RESOURCE_GROUP \
+            --image $ACR/jarvis-frontend:${{ github.sha }}
