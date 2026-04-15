@@ -30,6 +30,12 @@ export function currencyLabel(currency: string): string {
 
 export function formatCurrency(value: number | null | undefined, currency = "USD"): string {
   if (value == null) return "—";
+  // For currencies where Intl outputs the ISO code (e.g. "SGD 1,234.56") we
+  // format as a plain number and prepend our preferred symbol instead.
+  if (CURRENCY_SYMBOLS[currency]) {
+    const num = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
+    return `${CURRENCY_SYMBOLS[currency]}${num}`;
+  }
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency,
