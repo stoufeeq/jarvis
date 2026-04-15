@@ -4,6 +4,7 @@ Swap out the provider by replacing the methods below with Polygon.io calls.
 """
 
 import asyncio
+import math
 from functools import partial
 
 import yfinance as yf
@@ -36,9 +37,21 @@ class MarketDataService:
             if df.empty:
                 raise ValueError(f"No data for {ticker}")
 
+            def _f(v):
+                """Float-cast and return None for NaN/Inf."""
+                try:
+                    f = float(v)
+                    return f if math.isfinite(f) else None
+                except (TypeError, ValueError):
+                    return None
+
             info = t.fast_info
-            current = float(df["Close"].iloc[-1])
-            prev = float(df["Close"].iloc[-2]) if len(df) >= 2 else current
+            current = _f(df["Close"].iloc[-1])
+            if current is None:
+                raise ValueError(f"No finite price for {ticker}")
+            prev = _f(df["Close"].iloc[-2]) if len(df) >= 2 else current
+            if prev is None:
+                prev = current
             change = round(current - prev, 4)
             change_pct = round((change / prev) * 100, 2) if prev else 0.0
 
@@ -49,9 +62,9 @@ class MarketDataService:
                 "change": change,
                 "change_pct": change_pct,
                 "volume": int(df["Volume"].iloc[-1]),
-                "market_cap": getattr(info, "market_cap", None),
-                "fifty_two_week_high": getattr(info, "year_high", None),
-                "fifty_two_week_low": getattr(info, "year_low", None),
+                "market_cap": _f(getattr(info, "market_cap", None)),
+                "fifty_two_week_high": _f(getattr(info, "year_high", None)),
+                "fifty_two_week_low": _f(getattr(info, "year_low", None)),
             }
 
         result = await self._run_sync(_fetch)
