@@ -32,12 +32,12 @@ export function Sidebar() {
 
   return (
     <aside className="w-56 shrink-0 flex flex-col border-r border-border bg-card">
-      <div className="px-4 py-3 border-b border-border flex items-center">
+      <div className="px-4 py-3 flex items-center">
         <Image
           src="/logo.png"
           alt="Jarvis"
-          width={140}
-          height={39}
+          width={98}
+          height={27}
           className="object-contain"
           priority
         />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { advisorApi, portfolioApi } from "@/lib/api";
 import type { Portfolio, Conversation, ChatMessage } from "@/types";
@@ -13,7 +13,29 @@ export default function AdvisorPage() {
   const [selectedPortfolio, setSelectedPortfolio] = useState<number | undefined>();
   const [localMessages, setLocalMessages] = useState<ChatMessage[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(180);
+  const isDragging = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    const startX = e.clientX;
+    const startW = sidebarWidth;
+
+    const onMove = (ev: MouseEvent) => {
+      if (!isDragging.current) return;
+      const next = Math.min(320, Math.max(140, startW + ev.clientX - startX));
+      setSidebarWidth(next);
+    };
+    const onUp = () => {
+      isDragging.current = false;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [sidebarWidth]);
 
   const { data: portfolios = [] } = useQuery<Portfolio[]>({
     queryKey: ["portfolios"],
@@ -168,9 +190,19 @@ export default function AdvisorPage() {
   return (
     <div className="flex h-full gap-0 -m-4 md:-m-6">
       {/* Desktop sidebar — conversation history */}
-      <aside className="hidden md:flex w-64 shrink-0 border-r border-border flex-col bg-card">
+      <aside
+        className="hidden md:flex shrink-0 border-r border-border flex-col bg-card"
+        style={{ width: sidebarWidth }}
+      >
         <HistoryPanel />
       </aside>
+
+      {/* Resize handle */}
+      <div
+        onMouseDown={onDragStart}
+        className="hidden md:flex w-1 cursor-col-resize hover:bg-primary/30 active:bg-primary/50 transition-colors shrink-0"
+        title="Drag to resize"
+      />
 
       {/* Mobile history overlay */}
       {showHistory && (
