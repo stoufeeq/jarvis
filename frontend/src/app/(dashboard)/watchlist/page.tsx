@@ -108,7 +108,7 @@ export default function WatchlistPage() {
           onChange={setNewTicker}
           onSelect={handleAdd}
           placeholder="Search ticker or company name…"
-          className="w-72"
+          className="flex-1 sm:flex-none sm:w-72"
         />
         <button
           onClick={() => handleAdd()}
@@ -129,8 +129,8 @@ export default function WatchlistPage() {
 
       {/* Watchlist table */}
       {tickers.length > 0 && (
-        <div className="rounded-xl border border-border overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="rounded-xl border border-border overflow-hidden overflow-x-auto">
+          <table className="w-full text-sm min-w-[540px]">
             <thead>
               <tr className="border-b border-border bg-secondary/50">
                 {[

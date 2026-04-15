@@ -12,6 +12,7 @@ export default function AdvisorPage() {
   const [message, setMessage] = useState("");
   const [selectedPortfolio, setSelectedPortfolio] = useState<number | undefined>();
   const [localMessages, setLocalMessages] = useState<ChatMessage[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const { data: portfolios = [] } = useQuery<Portfolio[]>({
@@ -99,6 +100,7 @@ export default function AdvisorPage() {
   function handleSelectConv(conv: Conversation) {
     setActiveConvId(conv.id);
     setLocalMessages([]);
+    setShowHistory(false); // close history panel on mobile after selecting
   }
 
   const handleReview = async () => {
@@ -110,19 +112,25 @@ export default function AdvisorPage() {
 
   const isLoading = chatMutation.isPending;
 
-  return (
-    <div className="flex h-full gap-0 -m-6">
-      {/* Sidebar — conversation history */}
-      <aside className="w-64 shrink-0 border-r border-border flex flex-col bg-card">
-        <div className="p-3 border-b border-border">
+  // Conversation history panel (shared between desktop sidebar and mobile overlay)
+  function HistoryPanel() {
+    return (
+      <>
+        <div className="p-3 border-b border-border flex gap-2">
           <button
-            onClick={handleNewChat}
-            className="w-full px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90"
+            onClick={() => { handleNewChat(); setShowHistory(false); }}
+            className="flex-1 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90"
           >
             + New Chat
           </button>
+          {/* Close button — mobile only */}
+          <button
+            onClick={() => setShowHistory(false)}
+            className="md:hidden px-3 py-2 rounded-md bg-secondary text-sm font-medium"
+          >
+            ✕
+          </button>
         </div>
-
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
           {conversations.length === 0 && (
             <p className="text-xs text-muted-foreground px-2 py-4 text-center">No saved chats yet</p>
@@ -153,16 +161,44 @@ export default function AdvisorPage() {
             </div>
           ))}
         </div>
+      </>
+    );
+  }
+
+  return (
+    <div className="flex h-full gap-0 -m-4 md:-m-6">
+      {/* Desktop sidebar — conversation history */}
+      <aside className="hidden md:flex w-64 shrink-0 border-r border-border flex-col bg-card">
+        <HistoryPanel />
       </aside>
+
+      {/* Mobile history overlay */}
+      {showHistory && (
+        <div className="md:hidden fixed inset-0 z-50 flex">
+          <div className="w-72 max-w-[85vw] flex flex-col bg-card border-r border-border shadow-xl">
+            <HistoryPanel />
+          </div>
+          {/* Backdrop */}
+          <div className="flex-1 bg-black/50" onClick={() => setShowHistory(false)} />
+        </div>
+      )}
 
       {/* Main chat area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Toolbar */}
-        <div className="flex items-center gap-3 px-5 py-3 border-b border-border shrink-0">
+        <div className="flex items-center gap-2 px-3 md:px-5 py-3 border-b border-border shrink-0 flex-wrap">
+          {/* History toggle — mobile only */}
+          <button
+            onClick={() => setShowHistory(true)}
+            className="md:hidden px-2.5 py-1.5 rounded-md bg-secondary text-sm font-medium"
+            title="Chat history"
+          >
+            ☰
+          </button>
           <select
             value={selectedPortfolio ?? ""}
             onChange={(e) => setSelectedPortfolio(e.target.value ? Number(e.target.value) : undefined)}
-            className="rounded-md border border-border bg-input px-3 py-1.5 text-sm"
+            className="flex-1 min-w-0 rounded-md border border-border bg-input px-3 py-1.5 text-sm"
           >
             <option value="">No portfolio context</option>
             {portfolios.map((p) => (
@@ -173,15 +209,15 @@ export default function AdvisorPage() {
             <button
               onClick={handleReview}
               disabled={isLoading}
-              className="px-3 py-1.5 rounded-md bg-secondary text-sm font-medium hover:bg-secondary/80 disabled:opacity-50"
+              className="px-3 py-1.5 rounded-md bg-secondary text-sm font-medium hover:bg-secondary/80 disabled:opacity-50 whitespace-nowrap"
             >
-              Full Portfolio Review
+              Portfolio Review
             </button>
           )}
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+        <div className="flex-1 overflow-y-auto px-3 md:px-5 py-4 space-y-4">
           {localMessages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground">
               <p className="text-lg font-semibold mb-1">Ask Jarvis</p>
@@ -206,13 +242,13 @@ export default function AdvisorPage() {
         </div>
 
         {/* Input */}
-        <div className="px-5 py-4 border-t border-border shrink-0">
+        <div className="px-3 md:px-5 py-3 border-t border-border shrink-0">
           <div className="flex gap-2 items-end">
             <textarea
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSend(); }}
-              placeholder="Ask something… (⌘↵ to send)"
+              placeholder="Ask something…"
               rows={2}
               className="flex-1 rounded-md border border-border bg-input px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring"
             />

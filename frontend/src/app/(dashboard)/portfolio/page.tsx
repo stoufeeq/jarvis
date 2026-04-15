@@ -250,9 +250,9 @@ export default function PortfolioPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-bold">Portfolio</h1>
-        <div className="flex gap-2 items-center">
+        <div className="flex flex-wrap gap-2 items-center">
           <PrivacyToggle />
           {selectedId && (
             <>
@@ -532,8 +532,8 @@ export default function PortfolioPage() {
 
           {/* Positions table */}
           {activeTab === "positions" && (
-            <div className="rounded-xl border border-border overflow-hidden">
-              <table className="w-full text-sm">
+            <div className="rounded-xl border border-border overflow-hidden overflow-x-auto">
+              <table className="w-full text-sm min-w-[640px]">
                 <thead>
                   <tr className="border-b border-border bg-secondary/50">
                     <th
@@ -609,8 +609,8 @@ export default function PortfolioPage() {
 
           {/* Trades table */}
           {activeTab === "trades" && (
-            <div className="rounded-xl border border-border overflow-hidden">
-              <table className="w-full text-sm">
+            <div className="rounded-xl border border-border overflow-hidden overflow-x-auto">
+              <table className="w-full text-sm min-w-[640px]">
                 <thead>
                   <tr className="border-b border-border bg-secondary/50">
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground">Date</th>
