@@ -146,6 +146,13 @@
   --ring: 210 25% 55%;
 }
 
+/* Invert logo on light themes so it remains visible */
+[data-theme="light"] .logo-adaptive,
+[data-theme="sepia"] .logo-adaptive,
+[data-theme="ocean"] .logo-adaptive {
+  filter: invert(1);
+}
+
 /* iOS safe-area support — keeps content above home indicator */
 @supports (padding-bottom: env(safe-area-inset-bottom)) {
   .safe-bottom {

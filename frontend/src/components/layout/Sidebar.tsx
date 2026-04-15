@@ -40,7 +40,7 @@ export function Sidebar() {
           alt="Jarvis"
           width={98}
           height={27}
-          className="object-contain"
+          className="object-contain logo-adaptive"
           priority
         />
       </div>

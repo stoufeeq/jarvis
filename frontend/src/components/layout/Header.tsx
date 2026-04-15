@@ -17,7 +17,7 @@ export function Header() {
         alt="Jarvis"
         width={100}
         height={28}
-        className="object-contain md:hidden"
+        className="object-contain md:hidden logo-adaptive"
         priority
       />
       <div className="hidden md:block" /> {/* spacer on desktop */}
