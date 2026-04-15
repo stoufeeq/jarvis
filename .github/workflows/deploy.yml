@@ -85,6 +85,10 @@ jobs:
             --name jarvis-api \
             --resource-group $RESOURCE_GROUP \
             --image $ACR/jarvis-backend:${{ github.sha }}
+          az containerapp revision list \
+            --name jarvis-api --resource-group $RESOURCE_GROUP \
+            --query "[?properties.active && name != '$(az containerapp show --name jarvis-api --resource-group $RESOURCE_GROUP --query "properties.latestRevisionName" -o tsv)'].name" \
+            -o tsv | xargs -r -I{} az containerapp revision deactivate --name jarvis-api --resource-group $RESOURCE_GROUP --revision {}
 
       - name: Deploy backend (worker)
         run: |
@@ -92,6 +96,10 @@ jobs:
             --name jarvis-worker \
             --resource-group $RESOURCE_GROUP \
             --image $ACR/jarvis-backend:${{ github.sha }}
+          az containerapp revision list \
+            --name jarvis-worker --resource-group $RESOURCE_GROUP \
+            --query "[?properties.active && name != '$(az containerapp show --name jarvis-worker --resource-group $RESOURCE_GROUP --query "properties.latestRevisionName" -o tsv)'].name" \
+            -o tsv | xargs -r -I{} az containerapp revision deactivate --name jarvis-worker --resource-group $RESOURCE_GROUP --revision {}
 
       - name: Deploy backend (beat)
         run: |
@@ -99,6 +107,10 @@ jobs:
             --name jarvis-beat \
             --resource-group $RESOURCE_GROUP \
             --image $ACR/jarvis-backend:${{ github.sha }}
+          az containerapp revision list \
+            --name jarvis-beat --resource-group $RESOURCE_GROUP \
+            --query "[?properties.active && name != '$(az containerapp show --name jarvis-beat --resource-group $RESOURCE_GROUP --query "properties.latestRevisionName" -o tsv)'].name" \
+            -o tsv | xargs -r -I{} az containerapp revision deactivate --name jarvis-beat --resource-group $RESOURCE_GROUP --revision {}
 
       - name: Deploy frontend
         run: |
@@ -106,3 +118,7 @@ jobs:
             --name jarvis-app \
             --resource-group $RESOURCE_GROUP \
             --image $ACR/jarvis-frontend:${{ github.sha }}
+          az containerapp revision list \
+            --name jarvis-app --resource-group $RESOURCE_GROUP \
+            --query "[?properties.active && name != '$(az containerapp show --name jarvis-app --resource-group $RESOURCE_GROUP --query "properties.latestRevisionName" -o tsv)'].name" \
+            -o tsv | xargs -r -I{} az containerapp revision deactivate --name jarvis-app --resource-group $RESOURCE_GROUP --revision {}
