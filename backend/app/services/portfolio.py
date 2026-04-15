@@ -50,33 +50,18 @@ class PortfolioService:
         await self.db.flush()
 
     async def list_positions(self, portfolio_id: int) -> list[Position]:
+        """Return positions using DB-cached prices only.
+
+        Prices are kept fresh by the Celery worker (every 5 min).  Making a
+        live yfinance call here added 500 ms–2 s of latency on every page load
+        for no meaningful accuracy gain over a 5-minute cache.
+        """
         result = await self.db.execute(
             select(Position).where(Position.portfolio_id == portfolio_id)
         )
         positions = list(result.scalars().all())
 
-        tickers = [p.ticker for p in positions]
-        if tickers:
-            try:
-                mds = MarketDataService()
-                quotes = await mds.get_quotes(tickers)
-                price_map = {
-                    q["ticker"]: q["price"]
-                    for q in quotes
-                    if q.get("price") is not None and math.isfinite(float(q["price"]))
-                }
-                for pos in positions:
-                    cp = price_map.get(pos.ticker)
-                    if cp:
-                        avg_cost = float(pos.avg_cost)
-                        qty = float(pos.quantity)
-                        pos.current_price = cp
-                        pos.unrealized_pnl = round((cp - avg_cost) * qty, 4)
-                        pos.unrealized_pnl_pct = round((cp - avg_cost) / avg_cost * 100, 2)
-            except Exception:
-                pass  # return positions without live prices rather than failing
-
-        # Sanitize any NaN values previously written to DB by the Celery worker
+        # Sanitize any NaN/Inf values previously written to DB by the Celery worker
         for pos in positions:
             for field in ("current_price", "unrealized_pnl", "unrealized_pnl_pct"):
                 v = getattr(pos, field)

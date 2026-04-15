@@ -15,16 +15,19 @@ export default function DashboardPage() {
   const { data: portfolios = [] } = useQuery<Portfolio[]>({
     queryKey: ["portfolios"],
     queryFn: () => portfolioApi.list().then((r) => r.data),
+    staleTime: 60_000,
   });
 
   const { data: signals = [] } = useQuery<Signal[]>({
     queryKey: ["signals", "recent"],
     queryFn: () => signalsApi.list({ limit: 10 }).then((r) => r.data),
+    staleTime: 60_000,
   });
 
   const { data: liquidity } = useQuery<LiquidityResponse>({
     queryKey: ["liquidity"],
     queryFn: () => accountsApi.liquidity().then((r) => r.data),
+    staleTime: 60_000,
   });
 
   const dashboardBase = "USD";

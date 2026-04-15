@@ -72,6 +72,7 @@ export default function PortfolioPage() {
   const { data: portfolios = [], isLoading } = useQuery<Portfolio[]>({
     queryKey: ["portfolios"],
     queryFn: () => portfolioApi.list().then((r) => r.data),
+    staleTime: 60_000,
   });
 
   // Derive summary from the already-fetched list — avoids a second get_summary()
@@ -82,12 +83,14 @@ export default function PortfolioPage() {
     queryKey: ["positions", selectedId],
     queryFn: () => portfolioApi.positions(selectedId!).then((r) => r.data),
     enabled: !!selectedId,
+    staleTime: 60_000,
   });
 
   const { data: trades = [] } = useQuery<Trade[]>({
     queryKey: ["trades", selectedId],
     queryFn: () => portfolioApi.trades(selectedId!).then((r) => r.data),
     enabled: !!selectedId && activeTab === "trades",
+    staleTime: 60_000,
   });
 
   // Live quotes for change % column — runs in parallel with positions
