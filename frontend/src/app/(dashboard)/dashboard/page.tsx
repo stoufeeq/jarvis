@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery, useQueries } from "@tanstack/react-query";
+import { ChevronDown } from "lucide-react";
 import { portfolioApi, signalsApi, accountsApi, marketApi } from "@/lib/api";
 import { formatCurrency, formatPct, pnlColor, currencyLabel } from "@/lib/utils";
 import { useCurrencyDisplay } from "@/hooks/useCurrencyDisplay";
@@ -153,6 +155,8 @@ function StatCard({
 }
 
 function SignalRow({ signal }: { signal: Signal }) {
+  const [expanded, setExpanded] = useState(false);
+
   const dirColor =
     signal.direction === "bullish"
       ? "text-emerald-500"
@@ -161,25 +165,48 @@ function SignalRow({ signal }: { signal: Signal }) {
       : "text-yellow-500";
 
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-border bg-card p-3">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="font-semibold">{signal.ticker}</span>
-          <span className={`text-xs font-medium uppercase ${dirColor}`}>
-            {signal.direction}
-          </span>
-          <span className="text-xs text-muted-foreground">
-            {"★".repeat(signal.strength)}{"☆".repeat(5 - signal.strength)}
-          </span>
-          <span className="text-xs text-muted-foreground">{signal.signal_type}</span>
+    <div
+      className="rounded-lg border border-border bg-card p-3 cursor-pointer select-none"
+      onClick={() => setExpanded((v) => !v)}
+    >
+      {/* Header row — always visible */}
+      <div className="flex items-start gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold">{signal.ticker}</span>
+            <span className={`text-xs font-medium uppercase ${dirColor}`}>
+              {signal.direction}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {"★".repeat(signal.strength)}{"☆".repeat(5 - signal.strength)}
+            </span>
+            <span className="text-xs text-muted-foreground">{signal.signal_type.replace("_", " ")}</span>
+          </div>
+          <p className={`text-sm text-muted-foreground mt-1 ${expanded ? "" : "truncate"}`}>
+            {signal.rationale}
+          </p>
         </div>
-        <p className="text-sm text-muted-foreground mt-1 truncate">{signal.rationale}</p>
+        <ChevronDown
+          className={`w-4 h-4 text-muted-foreground shrink-0 mt-0.5 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
+        />
       </div>
-      {signal.entry_price && (
-        <div className="text-right shrink-0 text-xs space-y-0.5">
-          <div>Entry: {formatCurrency(signal.entry_price)}</div>
-          <div className="text-red-400">SL: {formatCurrency(signal.stop_loss)}</div>
-          <div className="text-emerald-400">TP: {formatCurrency(signal.take_profit)}</div>
+
+      {/* Expanded details */}
+      {expanded && (
+        <div className="mt-3 pt-3 border-t border-border space-y-2">
+          {signal.indicators && (
+            <p className="text-xs text-muted-foreground font-mono">{signal.indicators}</p>
+          )}
+          {signal.entry_price && (
+            <div className="flex gap-4 text-xs">
+              <div>Entry <span className="font-medium text-foreground">{formatCurrency(signal.entry_price)}</span></div>
+              {signal.stop_loss && <div>SL <span className="font-medium text-red-400">{formatCurrency(signal.stop_loss)}</span></div>}
+              {signal.take_profit && <div>TP <span className="font-medium text-emerald-400">{formatCurrency(signal.take_profit)}</span></div>}
+            </div>
+          )}
+          {signal.timeframe && (
+            <p className="text-xs text-muted-foreground">Timeframe: <span className="text-foreground">{signal.timeframe}</span></p>
+          )}
         </div>
       )}
     </div>
