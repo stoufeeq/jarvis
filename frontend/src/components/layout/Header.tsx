@@ -10,7 +10,7 @@ export function Header() {
   const logout = useAuthStore((s) => s.logout);
 
   return (
-    <header className="h-14 shrink-0 flex items-center justify-between gap-3 px-4 md:px-6 border-b border-border bg-card">
+    <header className="shrink-0 flex items-center justify-between gap-3 px-4 md:px-6 border-b border-border bg-card" style={{ paddingTop: "env(safe-area-inset-top)", minHeight: "calc(3.5rem + env(safe-area-inset-top))" }}>
       {/* Logo — visible on mobile where sidebar is hidden */}
       <Image
         src="/logo.png"

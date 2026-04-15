@@ -29,7 +29,7 @@ export function BottomNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 flex border-t border-border bg-card overflow-x-auto">
+    <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 flex border-t border-border bg-card overflow-x-auto" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
       {NAV.map(({ href, label, icon: Icon }) => {
         const active = pathname.startsWith(href);
         return (
