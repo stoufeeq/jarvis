@@ -10,12 +10,14 @@ import {
   Bell,
   MessageSquare,
   Settings,
+  Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/dashboard", label: "Home", icon: LayoutDashboard },
   { href: "/portfolio", label: "Portfolio", icon: Briefcase },
+  { href: "/accounts", label: "Accounts", icon: Wallet },
   { href: "/watchlist", label: "Watchlist", icon: BookOpen },
   { href: "/signals", label: "Signals", icon: TrendingUp },
   { href: "/alerts", label: "Alerts", icon: Bell },
@@ -27,7 +29,7 @@ export function BottomNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 flex border-t border-border bg-card">
+    <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 flex border-t border-border bg-card overflow-x-auto">
       {NAV.map(({ href, label, icon: Icon }) => {
         const active = pathname.startsWith(href);
         return (
@@ -35,11 +37,11 @@ export function BottomNav() {
             key={href}
             href={href}
             className={cn(
-              "flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium transition-colors",
+              "flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[9px] font-medium transition-colors min-w-[50px]",
               active ? "text-primary" : "text-muted-foreground"
             )}
           >
-            <Icon className={cn("w-5 h-5", active ? "text-primary" : "text-muted-foreground")} />
+            <Icon className={cn("w-4 h-4", active ? "text-primary" : "text-muted-foreground")} />
             {label}
           </Link>
         );

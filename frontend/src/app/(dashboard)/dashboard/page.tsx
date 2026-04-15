@@ -1,13 +1,13 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { portfolioApi, signalsApi } from "@/lib/api";
+import { portfolioApi, signalsApi, accountsApi } from "@/lib/api";
 import { formatCurrency, formatPct, pnlColor } from "@/lib/utils";
 import { useCurrencyDisplay } from "@/hooks/useCurrencyDisplay";
 import { CurrencySwitcher } from "@/components/ui/CurrencySwitcher";
 import { PrivacyToggle } from "@/components/ui/PrivacyToggle";
 import { usePrivacyStore } from "@/store/privacy";
-import type { Portfolio, Signal } from "@/types";
+import type { Portfolio, Signal, LiquidityResponse } from "@/types";
 
 const MASK = "••••••";
 
@@ -22,16 +22,23 @@ export default function DashboardPage() {
     queryFn: () => signalsApi.list({ limit: 10 }).then((r) => r.data),
   });
 
+  const { data: liquidity } = useQuery<LiquidityResponse>({
+    queryKey: ["liquidity"],
+    queryFn: () => accountsApi.liquidity().then((r) => r.data),
+  });
+
   const dashboardBase = "USD";
   const { displayCurrency, setDisplayCurrency, rate, convert, base: baseCurrency } =
     useCurrencyDisplay(dashboardBase);
 
   const isPrivate = usePrivacyStore((s) => s.isPrivate);
 
-  const totalValue = portfolios.reduce((s, p) => s + (p.total_value ?? 0), 0);
+  const portfolioValue = portfolios.reduce((s, p) => s + (p.total_value ?? 0), 0);
+  const liquidityUsd = liquidity?.total_usd ?? 0;
+  const totalValue = portfolioValue + liquidityUsd;
   const totalPnl = portfolios.reduce((s, p) => s + (p.total_pnl ?? 0), 0);
   const totalDayChange = portfolios.reduce((s, p) => s + (p.day_change ?? 0), 0);
-  const prevTotal = totalValue - totalDayChange;
+  const prevTotal = portfolioValue - totalDayChange;
   const totalDayChangePct = prevTotal ? (totalDayChange / prevTotal) * 100 : null;
 
   const mv = (val: string) => (isPrivate ? MASK : val);
@@ -52,11 +59,17 @@ export default function DashboardPage() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         <StatCard
-          label="Total Portfolio Value"
+          label="Total Value"
           value={mv(formatCurrency(convert(totalValue), displayCurrency))}
           note={isPrivate ? undefined : displayCurrency}
+        />
+        <StatCard
+          label="Liquidity"
+          value={mv(formatCurrency(convert(liquidityUsd), displayCurrency))}
+          note={isPrivate ? undefined : displayCurrency}
+          valueClass="text-sky-400"
         />
         <StatCard
           label="Unrealized P&L"

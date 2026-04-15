@@ -166,6 +166,42 @@ export interface OptionsFlowSummary {
   uw_flow?: UWFlowItem[];
 }
 
+export interface AccountBalance {
+  id: number;
+  currency: string;
+  balance: number;
+}
+
+export interface AccountTransaction {
+  id: number;
+  account_id: number;
+  transaction_type: "deposit" | "withdrawal";
+  amount: number;
+  currency: string;
+  notes: string | null;
+  transacted_at: string;
+  created_at: string;
+}
+
+export interface Account {
+  id: number;
+  user_id: number;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  created_at: string;
+  balances: AccountBalance[];
+}
+
+export interface AccountDetail extends Account {
+  transactions: AccountTransaction[];
+}
+
+export interface LiquidityResponse {
+  balances: Record<string, number>;
+  total_usd: number;
+}
+
 export interface InsiderTrade {
   id: number;
   ticker: string;

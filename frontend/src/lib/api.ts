@@ -132,6 +132,20 @@ export const alertsApi = {
   delete: (id: number) => api.delete(`/alerts/${id}`),
 };
 
+export const accountsApi = {
+  list: () => api.get("/accounts/"),
+  get: (id: number) => api.get(`/accounts/${id}`),
+  create: (data: { name: string; description?: string }) => api.post("/accounts/", data),
+  update: (id: number, data: object) => api.patch(`/accounts/${id}`, data),
+  delete: (id: number) => api.delete(`/accounts/${id}`),
+  deposit: (id: number, data: { amount: number; currency: string; notes?: string; transacted_at?: string }) =>
+    api.post(`/accounts/${id}/deposit`, data),
+  withdraw: (id: number, data: { amount: number; currency: string; notes?: string; transacted_at?: string }) =>
+    api.post(`/accounts/${id}/withdraw`, data),
+  transactions: (id: number) => api.get(`/accounts/${id}/transactions`),
+  liquidity: () => api.get("/accounts/liquidity"),
+};
+
 export const watchlistApi = {
   list: () => api.get("/watchlists/"),
   create: (name: string) => api.post("/watchlists/", { name }),

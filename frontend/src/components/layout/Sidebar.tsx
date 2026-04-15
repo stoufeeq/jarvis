@@ -12,6 +12,7 @@ import {
   MessageSquare,
   Settings,
   LogOut,
+  Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth";
@@ -19,6 +20,7 @@ import { useAuthStore } from "@/store/auth";
 const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/portfolio", label: "Portfolio", icon: Briefcase },
+  { href: "/accounts", label: "Accounts", icon: Wallet },
   { href: "/watchlist", label: "Watchlist", icon: BookOpen },
   { href: "/signals", label: "Signals", icon: TrendingUp },
   { href: "/alerts", label: "Alerts", icon: Bell },
