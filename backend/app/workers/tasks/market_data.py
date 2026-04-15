@@ -6,9 +6,7 @@ import asyncio
 import math
 from datetime import datetime, timezone
 
-import yfinance as yf
 from sqlalchemy import select
-from ta.momentum import RSIIndicator
 
 from app.database import AsyncSessionLocal
 from app.models.portfolio import Position
@@ -102,6 +100,8 @@ async def _fetch_pe_rsi_batch(tickers: list[str]) -> dict[str, tuple[float | Non
 
 def _fetch_pe_rsi_sync(ticker: str) -> tuple[float | None, float | None]:
     """Synchronous: fetch P/E from Ticker.info and compute RSI14 from 1-month OHLCV."""
+    import yfinance as yf
+    from ta.momentum import RSIIndicator
     pe: float | None = None
     rsi: float | None = None
     try:
