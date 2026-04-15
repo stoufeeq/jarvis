@@ -86,16 +86,18 @@ async def _refresh_all_prices():
 
 
 async def _fetch_pe_rsi_batch(tickers: list[str]) -> dict[str, tuple[float | None, float | None]]:
-    """Fetch P/E ratio and RSI14 for a list of tickers in parallel."""
+    """Fetch P/E ratio and RSI14 for a list of tickers sequentially to avoid OOM in low-RAM containers."""
     if not tickers:
         return {}
-    loop = asyncio.get_event_loop()
-    tasks = [loop.run_in_executor(None, _fetch_pe_rsi_sync, t) for t in tickers]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    return {
-        ticker: (result if not isinstance(result, Exception) else (None, None))
-        for ticker, result in zip(tickers, results)
-    }
+    loop = asyncio.get_running_loop()
+    results: dict[str, tuple[float | None, float | None]] = {}
+    for ticker in tickers:
+        try:
+            result = await loop.run_in_executor(None, _fetch_pe_rsi_sync, ticker)
+            results[ticker] = result
+        except Exception:
+            results[ticker] = (None, None)
+    return results
 
 
 def _fetch_pe_rsi_sync(ticker: str) -> tuple[float | None, float | None]:
