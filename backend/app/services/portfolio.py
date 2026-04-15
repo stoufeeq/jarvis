@@ -225,15 +225,18 @@ class PortfolioService:
         total_pnl = total_value - total_cost
         total_pnl_pct = (total_pnl / total_cost * 100) if total_cost else None
 
-        # Today's change — read from the in-process quote cache (no extra HTTP calls)
-        mds_cache = MarketDataService()
+        # Today's change — derived from DB-cached current_price and previous_close.
+        # Both are written by the Celery worker every 5 min, so this works correctly
+        # across API/worker container boundaries (no in-process cache dependency).
         day_change = 0.0
         for pos in positions:
-            q = mds_cache.get_cached_quote(pos.ticker)
-            if q:
-                raw = q.get("change", 0.0) or 0.0
-                change_per_share = raw if math.isfinite(float(raw)) else 0.0
-                day_change += to_base(float(pos.quantity) * change_per_share, pos.currency or "USD")
+            cp = price_map.get(pos.ticker)
+            prev = pos.previous_close
+            if cp is not None and prev is not None:
+                prev_f = float(prev)
+                if math.isfinite(prev_f) and prev_f > 0:
+                    change_per_share = cp - prev_f
+                    day_change += to_base(float(pos.quantity) * change_per_share, pos.currency or "USD")
         prev_total = total_value - day_change
         day_change_pct = (day_change / prev_total * 100) if prev_total else None
 

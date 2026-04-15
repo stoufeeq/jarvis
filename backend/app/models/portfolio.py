@@ -68,6 +68,7 @@ class Position(TimestampMixin, Base):
     currency: Mapped[str] = mapped_column(String(10), nullable=False, server_default="USD")
     # Cached values — updated by background job
     current_price: Mapped[float | None] = mapped_column(Numeric(18, 4))
+    previous_close: Mapped[float | None] = mapped_column(Numeric(18, 4))
     unrealized_pnl: Mapped[float | None] = mapped_column(Numeric(18, 4))
     unrealized_pnl_pct: Mapped[float | None] = mapped_column(Numeric(8, 4))
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

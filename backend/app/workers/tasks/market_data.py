@@ -57,6 +57,7 @@ async def _refresh_all_prices():
                 avg_cost = float(pos.avg_cost)
                 qty = float(pos.quantity)
                 pos.current_price = cp
+                pos.previous_close = _safe_price(q.get("previous_close"))
                 pos.unrealized_pnl = round((cp - avg_cost) * qty, 4)
                 pos.unrealized_pnl_pct = round((cp - avg_cost) / avg_cost * 100, 2) if avg_cost else 0
 
