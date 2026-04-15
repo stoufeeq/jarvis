@@ -483,7 +483,7 @@ export default function PortfolioPage() {
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
               <SummaryCard
-                label="Total Value"
+                label="Total Portfolio Value"
                 value={mv(formatCurrency(convert(summary?.total_value), displayCurrency))}
                 note={isPrivate ? undefined : displayCurrency}
               />
