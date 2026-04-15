@@ -13,7 +13,9 @@ config = context.config
 # Override sqlalchemy.url from env if set
 db_url = os.getenv("DATABASE_URL_SYNC")
 if db_url:
-    config.set_main_option("sqlalchemy.url", db_url)
+    # configparser treats % as interpolation; escape it so percent-encoded
+    # passwords (e.g. Jarvis%40...) don't raise ValueError
+    config.set_main_option("sqlalchemy.url", db_url.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
