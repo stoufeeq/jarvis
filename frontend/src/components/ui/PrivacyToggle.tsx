@@ -68,12 +68,12 @@ export function PrivacyToggle() {
         {isPrivate ? (
           <>
             <EyeOffIcon />
-            <span className="hidden sm:inline">Hidden</span>
+            <span className="hidden sm:inline">Show $</span>
           </>
         ) : (
           <>
             <EyeIcon />
-            <span className="hidden sm:inline">Visible</span>
+            <span className="hidden sm:inline">Hide $</span>
           </>
         )}
       </button>
