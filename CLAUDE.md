@@ -324,7 +324,7 @@ All routes under `/api/v1/`. All except auth require `Authorization: Bearer <acc
 | PATCH | /me | UserUpdate | UserRead |
 | POST | /me/test-email | — | {ok, detail} |
 
-### Watchlists — `/api/v1/watchlists`
+###  Watchlists — `/api/v1/watchlists`
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | / | — | list[WatchlistRead] |
