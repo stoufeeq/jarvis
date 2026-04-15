@@ -171,6 +171,7 @@ Relations: `positions[]`, `trades[]`
 | avg_cost | Numeric(18,4) | weighted average cost |
 | currency | str(10) | ticker's native currency |
 | current_price | Numeric(18,4) nullable | cached by Celery every 5 min |
+| previous_close | Numeric(18,4) nullable | cached by Celery — used for Today's Change calculation |
 | unrealized_pnl | Numeric(18,4) nullable | cached |
 | unrealized_pnl_pct | Numeric(8,4) nullable | cached |
 | opened_at | DateTime tz | |
@@ -295,6 +296,16 @@ Index: (ticker, published_at)
 
 ---
 
+### Account / AccountBalance / AccountTransaction
+**Account**: id, user_id FK CASCADE, name str(255), currency str(3) default "USD", timestamps
+
+**AccountBalance**: id, account_id FK CASCADE, currency str(10), balance Numeric(18,4) default 0
+- Unique constraint: (account_id, currency)
+
+**AccountTransaction**: id, account_id FK CASCADE, currency str(10), amount Numeric(18,4), transaction_type Enum (deposit/withdrawal), notes Text nullable, timestamps
+
+---
+
 ## API Endpoints
 
 All routes under `/api/v1/`. All except auth require `Authorization: Bearer <access_token>`.
@@ -383,6 +394,21 @@ POST /scan deletes all existing signals for that ticker before writing fresh one
 | GET | /portfolio-review/{portfolio_id} | — | {review} |
 | GET | /news-digest | ticker? | {digest} |
 
+### Accounts — `/api/v1/accounts`
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | / | — | list[AccountRead] |
+| POST | / | AccountCreate | AccountRead 201 |
+| GET | /liquidity | — | LiquidityResponse |
+| GET | /{id} | — | AccountDetail (with transactions) |
+| PATCH | /{id} | AccountUpdate | AccountRead |
+| DELETE | /{id} | — | 204 |
+| POST | /{id}/deposit | AccountTransactionCreate | AccountRead |
+| POST | /{id}/withdraw | AccountTransactionCreate | AccountRead (400 if insufficient) |
+| GET | /{id}/transactions | — | list[AccountTransactionRead] |
+
+`LiquidityResponse`: `{balances: [{currency, balance}], total_usd: float}` — converts all balances to USD via FX rates.
+
 ---
 
 ## Services
@@ -394,19 +420,25 @@ Wraps yfinance. All methods are async (blocking calls run in thread pool executo
 - `get_history(ticker, period, interval)` — returns candle list.
 - `search(query)` — yfinance Search, returns up to 10 results.
 - `get_currency(ticker)` — fast_info.currency, normalises "GBp" → "GBP".
-- `get_fx_rates(currencies, base="USD")` — fetches `{CCY}USD=X` pairs.
+- `get_fx_rates(currencies, base="USD")` — fetches `{CCY}USD=X` pairs. Results cached 5 min in `_FX_CACHE`; returns stale cache on failure rather than defaulting to 1.0. Returns HTTP 503 from `/market/fx` if genuinely unavailable.
 - `get_ohlcv_dataframe(ticker, period, interval)` — returns pandas DataFrame for signal engine.
 
 To swap provider: replace the `_fetch()` inner functions with Polygon.io API calls.
 
 ### PortfolioService (`app/services/portfolio.py`)
-- `get_summary(portfolio)` — Uses DB-cached `current_price` from Position; only calls yfinance for positions with no cached price yet. Includes FX conversion to portfolio base currency.
+- `get_summary(portfolio)` — Uses DB-cached `current_price` from Position; only calls yfinance for positions with no cached price yet. Includes FX conversion to portfolio base currency. `day_change` computed from `current_price - previous_close` (both DB columns), not from in-process cache.
+- `list_positions(portfolio_id)` — pure DB read, no live yfinance calls. Sanitises NaN/Inf cached values.
 - `import_from_csv(portfolio_id, bytes)` — Parses IBKR Activity Statement CSV format.
 
+### AccountService (`app/services/account.py`)
+- `deposit(account, currency, amount)` — upserts AccountBalance row.
+- `withdraw(account, currency, amount)` — raises HTTP 400 if insufficient balance.
+- `get_liquidity(user_id)` — converts all currency balances to USD via `get_fx_rates`, returns totals.
+
 ### SignalEngine (`app/services/signal_engine.py`)
-- `scan_ticker(ticker)` — deletes existing signals, runs all 3 providers, flushes.
+- `scan_ticker(ticker)` — deletes existing signals, runs all providers, flushes.
 - `get_signals(...)` — filters by expiry, ticker, type, direction.
-- Providers: `TechnicalSignalProvider`, `InsiderSignalProvider(db)`, `AINewsSignalProvider(db)`.
+- Providers: `TechnicalSignalProvider`, `InsiderSignalProvider(db)`, `AINewsSignalProvider(db)`, `OptionsFlowSignalProvider`, `FundamentalSignalProvider`.
 
 ### AlertService (`app/services/alert.py`)
 - `check_and_trigger(user)` — fetches live price, checks conditions, sets `is_triggered`, sends email if "email" in channels.
@@ -505,6 +537,29 @@ Lookback: 3 days. Sentiment threshold: |score| ≥ 0.5.
 
 On-demand fallback: if no scored news in DB, fetches Yahoo Finance RSS (`feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}`), stores to NewsItem, then scores via Gemini. Expires: 3 days.
 
+### FundamentalSignalProvider (`app/signals/fundamental.py`)
+Data: `yfinance Ticker.info` dict (no paid API). Expires: 30 days. Timeframe: "swing".
+
+| Signal | Direction | Strength | Condition |
+|---|---|---|---|
+| PE_CHEAP | bullish | 3 | Trailing P/E < 15 |
+| PE_EXPENSIVE | bearish | 3 | Trailing P/E > 40 |
+| PB_CHEAP | bullish | 3 | P/B < 1.0 (below book value) |
+| PB_EXPENSIVE | bearish | 2 | P/B > 10 |
+| PEG_CHEAP | bullish | 3 | PEG < 1.0 |
+| PEG_EXPENSIVE | bearish | 2 | PEG > 3.0 |
+| EARNINGS_GROWTH_STRONG | bullish | 4 | YoY EPS growth > 25% |
+| EARNINGS_GROWTH_DECLINE | bearish | 4 | YoY EPS growth < −15% |
+| REVENUE_GROWTH_STRONG | bullish | 3 | YoY revenue growth > 20% |
+| REVENUE_GROWTH_DECLINE | bearish | 3 | YoY revenue growth < −10% |
+| HIGH_DEBT | bearish | 3 | Debt/Equity > 200% |
+| LOW_DEBT | bullish | 2 | Debt/Equity < 30% with positive FCF |
+| STRONG_MARGINS | bullish | 2 | Net margin > 20% |
+| WEAK_MARGINS | bearish | 3 | Net margin < 0% |
+| HIGH_ROE | bullish | 2 | ROE > 20% |
+| FCF_YIELD | bullish | 3 | FCF yield > 4% of market cap |
+| FCF_NEGATIVE | bearish | 2 | Negative free cash flow |
+
 ---
 
 ## Celery Workers
@@ -523,7 +578,7 @@ On-demand fallback: if no scored news in DB, fetches Yahoo Finance RSS (`feeds.f
 | fetch_and_process_news | 7:30 AM + 4:30 PM UTC | default |
 
 ### Tasks
-- **market_data.refresh_all_positions** — fetches live quotes for all positions, caches `current_price`, `unrealized_pnl`, `unrealized_pnl_pct` in DB.
+- **market_data.refresh_all_positions** — fetches live quotes for all positions and watchlist items, caches `current_price`, `previous_close`, `unrealized_pnl`, `unrealized_pnl_pct` in DB.
 - **signal_scan.scan_all_watchlist_tickers** — runs `SignalEngine.scan_ticker` for every distinct watchlist ticker.
 - **insider_fetch.fetch_all_insider_trades** — runs `InsiderTradeFetcher.fetch_for_ticker` for every watchlist ticker.
 - **news_digest.fetch_and_process_news** — if `NEWS_API_KEY` set: fetches NewsAPI headlines + per-ticker news. If not: fetches Yahoo RSS per ticker. Then calls `NewsSentimentService.score_unprocessed`.
@@ -537,12 +592,13 @@ On-demand fallback: if no scored news in DB, fetches Yahoo Finance RSS (`feeds.f
 | / | Root | Redirects to /dashboard |
 | /login | Login | JWT login form |
 | /register | Register | User registration |
-| /dashboard | Dashboard | Portfolio totals, recent signals (limit 10) |
+| /dashboard | Dashboard | Portfolio totals (FX-normalised), Liquidity card, recent signals (limit 10) |
 | /portfolio | Portfolio | Portfolio list, positions table (with P&L), trades table, IBKR CSV import, multi-currency |
 | /watchlist | Watchlist | Add/remove tickers, live prices (30s refresh) |
-| /signals | Signals | Two tabs: "Signals" (all signal types, filters, Scan Now) + "Options Flow" (P/C ratio, premium bars, unusual contracts table, UW live flow if key set) |
+| /signals | Signals | Two tabs: "Signals" (all signal types incl. fundamental, filters, Scan Now) + "Options Flow" |
 | /alerts | Alerts | Create/edit/delete/rearm alerts, triggered state |
-| /advisor | AI Advisor | Chat UI (dark indigo user bubbles), conversation history sidebar |
+| /advisor | AI Advisor | Chat UI, resizable history sidebar (desktop), overlay drawer (mobile) |
+| /accounts | Accounts | Cash accounts with multi-currency balances, deposit/withdraw, transaction history |
 | /settings | Settings | Profile name, password change, test email button |
 | /chart/[ticker] | Chart | Candlestick chart with period/interval selector |
 
@@ -565,6 +621,11 @@ On-demand fallback: if no scored news in DB, fetches Yahoo Finance RSS (`feeds.f
 - `displayCurrency` persisted to `localStorage` key `jarvis_display_currency`
 - `convert(amount, fromCcy)` applies live FX rate
 - `rate` fetched from `/api/v1/market/fx`
+- Retains last known rate on timeout/error (never falls back to 1:1)
+
+### Currency Formatting (`lib/utils.ts`)
+- `formatCurrency(value, currency)` — for currencies where `Intl` outputs ISO codes (e.g. SGD → "SGD 1,234"), formats as plain number and prepends symbol from `CURRENCY_SYMBOLS` map (SGD→S$, HKD→HK$, CAD→CA$, AUD→A$, NZD→NZ$).
+- `currencyLabel(currency)` — returns short display symbol for a currency code (used in card labels/notes).
 
 ### Alert Poller (`app/(dashboard)/layout.tsx`)
 - Polls `alertsApi.check()` every 60 seconds
@@ -637,6 +698,8 @@ NEXT_PUBLIC_API_URL=http://localhost:8002
 
 Run: `cd backend && alembic upgrade head`
 
+Migrations run automatically on API container startup (`docker-entrypoint.sh` runs `alembic upgrade head` before uvicorn).
+
 | Revision | Description |
 |---|---|
 | 42eaf3d4d911 | Initial schema — all core tables |
@@ -644,6 +707,8 @@ Run: `cd backend && alembic upgrade head`
 | dd2192779795 | Add conversations & chat_messages tables |
 | 847ff64d5995 | Add acknowledged_at to alerts |
 | fac24e233009 | Remove unique constraint on sec_accession_number (→ index only) |
+| c3d4e5f6a7b8 | Add accounts, account_balances, account_transactions tables |
+| d4e5f6a7b8c9 | Add previous_close column to positions |
 
 ---
 
@@ -686,8 +751,10 @@ date-fns@^3.6, react-hot-toast@^2.4
 - **pgvector** installed but not yet used — reserved for semantic search / embeddings on news/signals.
 - **IBKR live feed** not connected — trades entered manually or via CSV import.
 - **SMA200** requires 2 years of data — `get_ohlcv_dataframe` uses `period="2y"`.
-- **Celery beat** uses default `PersistentScheduler` (file-based). `celery-redbeat` is in requirements but not configured (removed from `celery_app.py`).
+- **Celery beat** uses default `PersistentScheduler` (file-based, `celerybeat-schedule` + `celerybeat-schedule.db`). These files are gitignored. `celery-redbeat` is in requirements but not configured.
 - **Docker** — see "Development Environment Convention" section at the top. Only Postgres and Redis run in Docker; all Python processes run locally.
+- **Azure stale revisions** — `az containerapp update` creates a new revision but doesn't deactivate old ones. The deploy workflow now auto-deactivates stale revisions after each update. If Today's Change shows 0 on Azure, check that only one revision of `jarvis-worker` is active (`az containerapp revision list --name jarvis-worker --resource-group jarvis`).
+- **Today's Change** — computed from `current_price - previous_close` on the Position model (both written by Celery worker). Shows 0 until the worker has run at least once after deployment. Shows correctly 0 when markets are closed (prices equal previous close).
 
 ---
 
@@ -696,7 +763,7 @@ date-fns@^3.6, react-hot-toast@^2.4
 1. Auth (register, login, JWT refresh, password change)
 2. Portfolio management (CRUD, positions, trades, IBKR CSV import, multi-currency P&L)
 3. Watchlist (CRUD tickers, drives background jobs)
-4. Market data (live quotes, history, FX, cached 60s in-process)
+4. Market data (live quotes, history, FX, cached 60s in-process; FX cached 5 min with stale-on-failure)
 5. Technical signals (RSI, MACD, SMA crossovers, BB, volume, golden/death cross)
 6. Insider signals (SEC Form 4 via EDGAR, cluster/exec buy/sell detection)
 7. AI News signals (Yahoo RSS or NewsAPI → Gemini sentiment → consensus/conviction signals)
@@ -705,17 +772,22 @@ date-fns@^3.6, react-hot-toast@^2.4
 10. AI Advisor (Gemini chat with portfolio context, conversation history, portfolio review, news digest)
 11. Notification Bell (badge, dropdown, dismiss/rearm/delete)
 12. Settings page (profile, password change, test email)
-13. Currency switcher (USD/GBP/EUR/etc., FX-converted display, localStorage persistence)
+13. Currency switcher (USD/GBP/EUR/etc., FX-converted display, localStorage persistence; S$/HK$/A$ symbols)
 14. Candlestick chart page
 15. Options flow signals (yfinance chain analysis + Unusual Whales overlay) with dedicated Options Flow tab on Signals page
+16. Accounts (cash accounts, multi-currency balances, deposit/withdraw, transaction history, Liquidity card on dashboard)
+17. Fundamental signals (P/E, P/B, PEG, earnings/revenue growth, margins, ROE, FCF — from yfinance)
+18. Dashboard FX normalisation (all portfolio values converted to display currency via per-portfolio FX rates)
+19. Today's Change card (computed from DB-persisted previous_close, works across API/worker container boundary)
+20. PWA support (manifest.json, viewport meta, iOS home screen install, safe-area insets, 100dvh layout)
 
 ---
 
 ## Planned / Not Yet Built
 
-- **Options flow signals** — implemented. Uses yfinance (free, delayed) by default; Unusual Whales API for real-time sweeps/blocks if `UNUSUAL_WHALES_API_KEY` is set. See `OptionsFlowSignalProvider` and `OptionsDataService`.
-- **Fundamental signals** — P/E, P/B, EPS growth, DCF. `signal_type = fundamental` exists in enum.
 - **IBKR live connection** — real-time position sync via IB Gateway/TWS (ib_insync library). Config placeholders exist.
 - **Telegram alerts** — `channels` field supports "telegram" but handler not implemented.
 - **pgvector / semantic search** — embeddings on news headlines for semantic deduplication or RAG for advisor.
-- **Mobile / PWA** — no responsive layout work done yet.
+- **PWA service worker** — offline caching not yet implemented. Manifest and install prompt work; background sync does not.
+- **Fundamental signals — DCF** — discounted cash flow valuation not yet implemented (needs multi-year cash flow history).
+- **Mobile responsive polish** — layout and grids are responsive; touch target sizes and extra-small (320px) layout not fully audited.
