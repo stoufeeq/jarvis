@@ -832,12 +832,12 @@ function TradeForm({
 
 function SummaryCard({ label, value, valueClass, note }: { label: string; value: string; valueClass?: string; note?: string }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-muted-foreground">{label}</p>
-        {note && <span className="text-xs text-muted-foreground/60">{note}</span>}
+    <div className="rounded-xl border border-border bg-card p-4 min-w-0">
+      <div className="flex items-center justify-between gap-1 min-w-0">
+        <p className="text-xs text-muted-foreground truncate">{label}</p>
+        {note && <span className="text-xs text-muted-foreground/60 shrink-0">{note}</span>}
       </div>
-      <p className={`text-xl font-bold mt-1 ${valueClass ?? ""}`}>{value}</p>
+      <p className={`text-base sm:text-xl font-bold mt-1 truncate ${valueClass ?? ""}`}>{value}</p>
     </div>
   );
 }

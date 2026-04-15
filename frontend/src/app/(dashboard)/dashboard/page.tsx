@@ -101,12 +101,12 @@ function StatCard({
   note?: string;
 }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{label}</p>
-        {note && <span className="text-xs text-muted-foreground/60">{note}</span>}
+    <div className="rounded-xl border border-border bg-card p-4 min-w-0">
+      <div className="flex items-center justify-between gap-1 min-w-0">
+        <p className="text-sm text-muted-foreground truncate">{label}</p>
+        {note && <span className="text-xs text-muted-foreground/60 shrink-0">{note}</span>}
       </div>
-      <p className={`text-2xl font-bold mt-1 ${valueClass ?? ""}`}>{value}</p>
+      <p className={`text-lg sm:text-2xl font-bold mt-1 truncate ${valueClass ?? ""}`}>{value}</p>
     </div>
   );
 }
