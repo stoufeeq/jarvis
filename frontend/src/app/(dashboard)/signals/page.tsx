@@ -8,7 +8,7 @@ import type { Signal, OptionsFlowSummary, UnusualContract, UWFlowItem } from "@/
 import toast from "react-hot-toast";
 
 const DIRECTIONS = ["", "bullish", "bearish", "neutral"] as const;
-const TYPES = ["", "technical", "insider", "ai_news", "options_flow"] as const;
+const TYPES = ["", "technical", "insider", "ai_news", "options_flow", "fundamental"] as const;
 const TABS = ["signals", "options_flow"] as const;
 type Tab = (typeof TABS)[number];
 
