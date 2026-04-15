@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
@@ -33,9 +34,16 @@ export default function RegisterPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background">
       <div className="w-full max-w-md p-8 rounded-xl border border-border bg-card space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold">Create account</h1>
-          <p className="text-muted-foreground text-sm mt-1">Get started with Jarvis</p>
+        <div className="flex flex-col items-center gap-3">
+          <Image
+            src="/logo.png"
+            alt="Jarvis"
+            width={180}
+            height={50}
+            className="object-contain"
+            priority
+          />
+          <h1 className="text-xl font-bold">Create account</h1>
         </div>
 
         <form onSubmit={handleRegister} className="space-y-4">
