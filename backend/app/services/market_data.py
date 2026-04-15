@@ -18,6 +18,11 @@ settings = get_settings()
 _QUOTE_CACHE: dict[str, tuple[float, dict]] = {}
 _QUOTE_TTL = 60  # seconds
 
+# FX rate cache — longer TTL since rates don't move second-to-second.
+# Keys: "FROM/TO" (str).  Values: (timestamp_float, rate_float).
+_FX_CACHE: dict[str, tuple[float, float]] = {}
+_FX_TTL = 300  # 5 minutes
+
 
 class MarketDataService:
     async def _run_sync(self, func, *args, **kwargs):
@@ -124,21 +129,63 @@ class MarketDataService:
 
     async def get_fx_rates(self, currencies: list[str], base: str = "USD") -> dict[str, float]:
         """Return {currency: rate_to_base} for each foreign currency.
-        E.g. {"EUR": 1.08, "GBP": 1.27} means 1 EUR = 1.08 USD."""
-        foreign = [c for c in set(currencies) if c.upper() != base.upper()]
+        E.g. {"EUR": 1.08, "GBP": 1.27} means 1 EUR = 1.08 USD.
+
+        Results are cached for 5 minutes.  On fetch failure the last cached
+        value is returned so callers never silently receive a 1:1 default.
+        """
+        import time as _time
+
+        base_u = base.upper()
+        foreign = [c.upper() for c in set(currencies) if c.upper() != base_u]
         if not foreign:
             return {}
 
-        def _fetch():
-            rates = {}
-            for ccy in foreign:
-                pair = f"{ccy.upper()}{base.upper()}=X"
-                df = yf.Ticker(pair).history(period="1d")
-                if not df.empty:
-                    rates[ccy.upper()] = float(df["Close"].iloc[-1])
-            return rates
+        now = _time.monotonic()
+        result: dict[str, float] = {}
+        to_fetch: list[str] = []
 
-        return await self._run_sync(_fetch)
+        for ccy in foreign:
+            cache_key = f"{ccy}/{base_u}"
+            cached = _FX_CACHE.get(cache_key)
+            if cached and (now - cached[0]) < _FX_TTL:
+                result[ccy] = cached[1]
+            else:
+                to_fetch.append(ccy)
+
+        if not to_fetch:
+            return result
+
+        def _fetch():
+            fresh: dict[str, float] = {}
+            for ccy in to_fetch:
+                pair = f"{ccy}{base_u}=X"
+                try:
+                    df = yf.Ticker(pair).history(period="1d")
+                    if not df.empty:
+                        rate = float(df["Close"].iloc[-1])
+                        if math.isfinite(rate) and rate > 0:
+                            fresh[ccy] = rate
+                except Exception:
+                    pass
+            return fresh
+
+        fetched = await self._run_sync(_fetch)
+
+        for ccy in to_fetch:
+            if ccy in fetched:
+                # Fresh rate — update cache and result
+                _FX_CACHE[f"{ccy}/{base_u}"] = (now, fetched[ccy])
+                result[ccy] = fetched[ccy]
+            else:
+                # Fetch failed — use stale cached value if available (beats 1:1 default)
+                cache_key = f"{ccy}/{base_u}"
+                stale = _FX_CACHE.get(cache_key)
+                if stale:
+                    result[ccy] = stale[1]
+                # If never cached, omit the key so callers know rate is unavailable
+
+        return result
 
     async def get_currency(self, ticker: str) -> dict:
         def _fetch():

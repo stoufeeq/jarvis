@@ -56,12 +56,15 @@ async def get_fx_rate(
     _: User = Depends(get_current_user),
 ):
     """Live exchange rate between two currencies. E.g. /market/fx?from=USD&to=SGD"""
+    from fastapi import HTTPException
     from_c = from_currency.upper()
     to_c = to_currency.upper()
     if from_c == to_c:
         return {"from": from_c, "to": to_c, "rate": 1.0}
     rates = await MarketDataService().get_fx_rates([from_c], base=to_c)
-    rate = rates.get(from_c, 1.0)
+    rate = rates.get(from_c)
+    if rate is None:
+        raise HTTPException(status_code=503, detail=f"FX rate for {from_c}/{to_c} temporarily unavailable")
     return {"from": from_c, "to": to_c, "rate": rate}
 
 
