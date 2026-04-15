@@ -185,9 +185,13 @@ function SignalRow({ signal }: { signal: Signal }) {
               <span className="text-xs text-muted-foreground">{signal.timeframe}</span>
             )}
           </div>
-          {/* One-line summary — always visible */}
+          {/* Rationale — truncated when collapsed, full when expanded */}
           {signal.rationale && (
-            <p className="text-sm text-muted-foreground mt-1 truncate">{signal.rationale}</p>
+            <p className={`text-sm text-muted-foreground mt-1 ${expanded ? "" : "truncate"}`}>{signal.rationale}</p>
+          )}
+          {/* Indicators — only when expanded */}
+          {expanded && signal.indicators && (
+            <p className="text-xs text-muted-foreground/60 font-mono mt-1">{signal.indicators}</p>
           )}
           {/* Entry / SL / TP — always visible */}
           {signal.entry_price && (
@@ -203,17 +207,6 @@ function SignalRow({ signal }: { signal: Signal }) {
         />
       </div>
 
-      {/* Expanded — full rationale + indicators */}
-      {expanded && (
-        <div className="mt-3 pt-3 border-t border-border space-y-1.5">
-          {signal.rationale && (
-            <p className="text-sm text-muted-foreground">{signal.rationale}</p>
-          )}
-          {signal.indicators && (
-            <p className="text-xs text-muted-foreground/60 font-mono mt-1">{signal.indicators}</p>
-          )}
-        </div>
-      )}
     </div>
   );
 }
