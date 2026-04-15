@@ -10,8 +10,17 @@ from app.api.v1.router import api_router
 from app.config import get_settings
 
 settings = get_settings()
+
+# Root logger at WARNING — silences third-party noise (yfinance, httpx, urllib3, etc.)
+# Our own "jarvis" logger stays at INFO so meaningful app events are still captured.
+logging.basicConfig(level=logging.WARNING)
+logging.getLogger("jarvis").setLevel(logging.INFO)
+
+# Silence particularly chatty libraries
+for _lib in ("yfinance", "urllib3", "httpx", "hpack", "peewee", "charset_normalizer"):
+    logging.getLogger(_lib).setLevel(logging.WARNING)
+
 logger = logging.getLogger("jarvis")
-logging.basicConfig(level=logging.INFO)
 
 
 @asynccontextmanager
