@@ -77,7 +77,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   if (!hydrated) return null;
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex overflow-hidden" style={{ height: "100dvh" }}>
       {/* Sidebar — desktop only */}
       <div className="hidden md:flex">
         <Sidebar />
