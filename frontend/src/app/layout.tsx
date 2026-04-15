@@ -15,7 +15,7 @@ export const metadata: Metadata = {
     title: "Jarvis",
   },
   icons: {
-    apple: "/logo.png",
+    apple: "/favicon.png",
   },
 };
 
