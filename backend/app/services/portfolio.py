@@ -1,5 +1,6 @@
 import csv
 import io
+import math
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -232,19 +233,25 @@ class PortfolioService:
         for pos in positions:
             q = mds_cache.get_cached_quote(pos.ticker)
             if q:
-                change_per_share = q.get("change", 0.0) or 0.0
+                raw = q.get("change", 0.0) or 0.0
+                change_per_share = raw if math.isfinite(float(raw)) else 0.0
                 day_change += to_base(float(pos.quantity) * change_per_share, pos.currency or "USD")
         prev_total = total_value - day_change
         day_change_pct = (day_change / prev_total * 100) if prev_total else None
 
+        def _safe(v: float | None) -> float | None:
+            if v is None:
+                return None
+            return None if not math.isfinite(v) else round(v, 2)
+
         return PortfolioSummary(
             **{c.key: getattr(portfolio, c.key) for c in portfolio.__table__.columns},
-            total_value=round(total_value, 2),
-            total_cost=round(total_cost, 2),
-            total_pnl=round(total_pnl, 2),
-            total_pnl_pct=round(total_pnl_pct, 2) if total_pnl_pct else None,
-            day_change=round(day_change, 2),
-            day_change_pct=round(day_change_pct, 2) if day_change_pct is not None else None,
+            total_value=_safe(total_value) or 0.0,
+            total_cost=_safe(total_cost) or 0.0,
+            total_pnl=_safe(total_pnl) or 0.0,
+            total_pnl_pct=_safe(total_pnl_pct),
+            day_change=_safe(day_change) or 0.0,
+            day_change_pct=_safe(day_change_pct),
             position_count=len(positions),
         )
 
