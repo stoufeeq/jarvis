@@ -74,11 +74,9 @@ export default function PortfolioPage() {
     queryFn: () => portfolioApi.list().then((r) => r.data),
   });
 
-  const { data: summary } = useQuery<Portfolio>({
-    queryKey: ["portfolio-summary", selectedId],
-    queryFn: () => portfolioApi.get(selectedId!).then((r) => r.data),
-    enabled: !!selectedId,
-  });
+  // Derive summary from the already-fetched list — avoids a second get_summary()
+  // call with potentially different prices causing P&L to differ from the dashboard.
+  const summary = portfolios.find((p) => p.id === selectedId);
 
   const { data: positions = [] } = useQuery<Position[]>({
     queryKey: ["positions", selectedId],
@@ -118,7 +116,6 @@ export default function PortfolioPage() {
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["portfolios"] });
-      qc.invalidateQueries({ queryKey: ["portfolio-summary", editingPortfolio!.id] });
       setEditingPortfolio(null);
       toast.success("Portfolio updated");
     },
@@ -169,8 +166,7 @@ export default function PortfolioPage() {
 
   function invalidateAll() {
     qc.invalidateQueries({ queryKey: ["positions", selectedId] });
-    qc.invalidateQueries({ queryKey: ["portfolio-summary", selectedId] });
-    qc.invalidateQueries({ queryKey: ["portfolios"] });
+    qc.invalidateQueries({ queryKey: ["portfolios"] }); // summary is derived from this
     qc.invalidateQueries({ queryKey: ["trades", selectedId] });
   }
 

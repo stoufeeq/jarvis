@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { portfolioApi, signalsApi, accountsApi } from "@/lib/api";
+import { useQuery, useQueries } from "@tanstack/react-query";
+import { portfolioApi, signalsApi, accountsApi, marketApi } from "@/lib/api";
 import { formatCurrency, formatPct, pnlColor } from "@/lib/utils";
 import { useCurrencyDisplay } from "@/hooks/useCurrencyDisplay";
 import { CurrencySwitcher } from "@/components/ui/CurrencySwitcher";
@@ -33,11 +33,36 @@ export default function DashboardPage() {
 
   const isPrivate = usePrivacyStore((s) => s.isPrivate);
 
-  const portfolioValue = portfolios.reduce((s, p) => s + (p.total_value ?? 0), 0);
+  // Collect unique non-USD portfolio currencies so we can normalise P&L to USD
+  const nonUsdCurrencies = [...new Set(
+    portfolios.map((p) => (p.currency || "USD").toUpperCase()).filter((c) => c !== "USD")
+  )];
+
+  const fxQueries = useQueries({
+    queries: nonUsdCurrencies.map((ccy) => ({
+      queryKey: ["fx", ccy, "USD"],
+      queryFn: () => marketApi.fx(ccy, "USD").then((r) => ({ ccy, rate: r.data.rate as number })),
+      staleTime: 60_000,
+    })),
+  });
+
+  // Map of currency → USD rate (e.g. { GBP: 1.27, EUR: 1.08 })
+  const fxRates: Record<string, number> = Object.fromEntries(
+    fxQueries.filter((q) => q.data).map((q) => [q.data!.ccy, q.data!.rate])
+  );
+
+  function toUsd(amount: number, currency: string): number {
+    const ccy = (currency || "USD").toUpperCase();
+    if (ccy === "USD") return amount;
+    const rate = fxRates[ccy];
+    return rate ? amount * rate : amount; // keep as-is until rate loads
+  }
+
+  const portfolioValue = portfolios.reduce((s, p) => s + toUsd(p.total_value ?? 0, p.currency || "USD"), 0);
   const liquidityUsd = liquidity?.total_usd ?? 0;
   const totalValue = portfolioValue + liquidityUsd;
-  const totalPnl = portfolios.reduce((s, p) => s + (p.total_pnl ?? 0), 0);
-  const totalDayChange = portfolios.reduce((s, p) => s + (p.day_change ?? 0), 0);
+  const totalPnl = portfolios.reduce((s, p) => s + toUsd(p.total_pnl ?? 0, p.currency || "USD"), 0);
+  const totalDayChange = portfolios.reduce((s, p) => s + toUsd(p.day_change ?? 0, p.currency || "USD"), 0);
   const prevTotal = portfolioValue - totalDayChange;
   const totalDayChangePct = prevTotal ? (totalDayChange / prevTotal) * 100 : null;
 
