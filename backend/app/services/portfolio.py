@@ -76,6 +76,13 @@ class PortfolioService:
             except Exception:
                 pass  # return positions without live prices rather than failing
 
+        # Sanitize any NaN values previously written to DB by the Celery worker
+        for pos in positions:
+            for field in ("current_price", "unrealized_pnl", "unrealized_pnl_pct"):
+                v = getattr(pos, field)
+                if v is not None and not math.isfinite(float(v)):
+                    setattr(pos, field, None)
+
         return positions
 
     async def list_trades(self, portfolio_id: int) -> list[Trade]:

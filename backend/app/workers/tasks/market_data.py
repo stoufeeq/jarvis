@@ -3,6 +3,7 @@ Celery tasks: market data refresh.
 """
 
 import asyncio
+import math
 
 from sqlalchemy import select
 
@@ -28,7 +29,11 @@ async def _refresh_all_positions():
         tickers = list({p.ticker for p in positions})
         mds = MarketDataService()
         quotes = await mds.get_quotes(tickers)
-        price_map = {q["ticker"]: q["price"] for q in quotes}
+        price_map = {
+            q["ticker"]: q["price"]
+            for q in quotes
+            if q.get("price") is not None and math.isfinite(float(q["price"]))
+        }
 
         for pos in positions:
             cp = price_map.get(pos.ticker)
@@ -36,7 +41,7 @@ async def _refresh_all_positions():
                 avg_cost = float(pos.avg_cost)
                 qty = float(pos.quantity)
                 pos.current_price = cp
-                pos.unrealized_pnl = (cp - avg_cost) * qty
-                pos.unrealized_pnl_pct = (cp - avg_cost) / avg_cost * 100 if avg_cost else 0
+                pos.unrealized_pnl = round((cp - avg_cost) * qty, 4)
+                pos.unrealized_pnl_pct = round((cp - avg_cost) / avg_cost * 100, 2) if avg_cost else 0
 
         await db.commit()
