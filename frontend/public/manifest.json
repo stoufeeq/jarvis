@@ -1,0 +1,19 @@
+{
+  "name": "Jarvis — Financial Intelligence",
+  "short_name": "Jarvis",
+  "description": "AI-powered portfolio management and financial advisor",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["finance", "productivity"]
+}
