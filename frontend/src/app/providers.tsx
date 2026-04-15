@@ -1,8 +1,22 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Toaster } from "react-hot-toast";
+import { useThemeStore } from "@/store/theme";
+
+function ThemeApplier() {
+  const theme = useThemeStore((s) => s.theme);
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === "dark") {
+      root.removeAttribute("data-theme");
+    } else {
+      root.setAttribute("data-theme", theme);
+    }
+  }, [theme]);
+  return null;
+}
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -19,6 +33,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
+      <ThemeApplier />
       {children}
       <Toaster
         position="top-right"

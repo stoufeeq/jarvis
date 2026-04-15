@@ -32,6 +32,120 @@
   body { @apply bg-background text-foreground; }
 }
 
+/* ── Themes ─────────────────────────────────────────────────────────────── */
+
+[data-theme="midnight"] {
+  --background: 0 0% 3%;
+  --foreground: 0 0% 95%;
+  --card: 0 0% 6%;
+  --card-foreground: 0 0% 95%;
+  --secondary: 0 0% 12%;
+  --secondary-foreground: 0 0% 95%;
+  --muted: 0 0% 12%;
+  --muted-foreground: 0 0% 55%;
+  --border: 0 0% 15%;
+  --input: 0 0% 12%;
+  --primary: 0 0% 95%;
+  --primary-foreground: 0 0% 8%;
+  --ring: 0 0% 70%;
+}
+
+[data-theme="slate"] {
+  --background: 215 28% 8%;
+  --foreground: 210 20% 95%;
+  --card: 215 25% 11%;
+  --card-foreground: 210 20% 95%;
+  --secondary: 215 20% 16%;
+  --secondary-foreground: 210 20% 95%;
+  --muted: 215 20% 16%;
+  --muted-foreground: 215 15% 55%;
+  --border: 215 20% 18%;
+  --input: 215 20% 16%;
+  --primary: 210 20% 95%;
+  --primary-foreground: 215 28% 10%;
+  --ring: 215 20% 65%;
+}
+
+[data-theme="forest"] {
+  --background: 150 30% 6%;
+  --foreground: 150 10% 95%;
+  --card: 150 25% 9%;
+  --card-foreground: 150 10% 95%;
+  --secondary: 150 20% 14%;
+  --secondary-foreground: 150 10% 95%;
+  --muted: 150 20% 14%;
+  --muted-foreground: 150 10% 55%;
+  --border: 150 20% 17%;
+  --input: 150 20% 14%;
+  --primary: 150 10% 95%;
+  --primary-foreground: 150 30% 8%;
+  --ring: 150 15% 60%;
+}
+
+[data-theme="rose"] {
+  --background: 350 30% 6%;
+  --foreground: 350 10% 95%;
+  --card: 350 25% 9%;
+  --card-foreground: 350 10% 95%;
+  --secondary: 350 20% 14%;
+  --secondary-foreground: 350 10% 95%;
+  --muted: 350 20% 14%;
+  --muted-foreground: 350 10% 55%;
+  --border: 350 20% 17%;
+  --input: 350 20% 14%;
+  --primary: 350 10% 95%;
+  --primary-foreground: 350 30% 8%;
+  --ring: 350 15% 60%;
+}
+
+[data-theme="light"] {
+  --background: 0 0% 97%;
+  --foreground: 222 20% 10%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 20% 10%;
+  --secondary: 210 15% 92%;
+  --secondary-foreground: 222 20% 10%;
+  --muted: 210 15% 92%;
+  --muted-foreground: 215 15% 42%;
+  --border: 214 20% 83%;
+  --input: 210 15% 92%;
+  --primary: 222 20% 15%;
+  --primary-foreground: 0 0% 98%;
+  --ring: 215 20% 60%;
+}
+
+[data-theme="sepia"] {
+  --background: 40 30% 95%;
+  --foreground: 30 20% 12%;
+  --card: 40 25% 99%;
+  --card-foreground: 30 20% 12%;
+  --secondary: 38 20% 88%;
+  --secondary-foreground: 30 20% 12%;
+  --muted: 38 20% 88%;
+  --muted-foreground: 30 15% 42%;
+  --border: 35 20% 80%;
+  --input: 38 20% 88%;
+  --primary: 30 25% 15%;
+  --primary-foreground: 40 30% 95%;
+  --ring: 35 15% 55%;
+}
+
+[data-theme="ocean"] {
+  --background: 210 40% 96%;
+  --foreground: 215 30% 10%;
+  --card: 210 35% 100%;
+  --card-foreground: 215 30% 10%;
+  --secondary: 210 28% 89%;
+  --secondary-foreground: 215 30% 10%;
+  --muted: 210 28% 89%;
+  --muted-foreground: 215 20% 42%;
+  --border: 210 25% 80%;
+  --input: 210 28% 89%;
+  --primary: 215 30% 15%;
+  --primary-foreground: 210 40% 96%;
+  --ring: 210 25% 55%;
+}
+
 /* iOS safe-area support — keeps content above home indicator */
 @supports (padding-bottom: env(safe-area-inset-bottom)) {
   .safe-bottom {

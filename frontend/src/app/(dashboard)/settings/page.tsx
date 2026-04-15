@@ -4,11 +4,14 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { authApi } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
+import { useThemeStore, THEMES } from "@/store/theme";
 import toast from "react-hot-toast";
 
 export default function SettingsPage() {
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
+  const theme = useThemeStore((s) => s.theme);
+  const setTheme = useThemeStore((s) => s.setTheme);
 
   // Profile form
   const [name, setName] = useState(user?.full_name ?? "");
@@ -69,6 +72,38 @@ export default function SettingsPage() {
   return (
     <div className="max-w-lg space-y-8">
       <h1 className="text-2xl font-bold">Settings</h1>
+
+      {/* Appearance */}
+      <section className="rounded-xl border border-border bg-card p-6 space-y-4">
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+          Appearance
+        </h2>
+        <p className="text-xs text-muted-foreground">Choose a colour theme. Light themes automatically switch to dark text for readability.</p>
+        <div className="grid grid-cols-4 gap-3">
+          {THEMES.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setTheme(t.key)}
+              className={`flex flex-col items-center gap-1.5 rounded-lg p-2 border-2 transition-colors ${
+                theme === t.key ? "border-primary" : "border-border hover:border-muted-foreground"
+              }`}
+              title={t.label}
+            >
+              {/* Swatch */}
+              <span
+                className="w-8 h-8 rounded-full border border-black/10 flex items-center justify-center text-xs font-bold"
+                style={{
+                  background: t.preview,
+                  color: t.dark ? "#f1f5f9" : "#1e293b",
+                }}
+              >
+                {theme === t.key ? "✓" : ""}
+              </span>
+              <span className="text-xs text-muted-foreground leading-tight text-center">{t.label}</span>
+            </button>
+          ))}
+        </div>
+      </section>
 
       {/* Profile */}
       <section className="rounded-xl border border-border bg-card p-6 space-y-4">
