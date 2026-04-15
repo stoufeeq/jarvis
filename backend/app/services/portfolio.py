@@ -60,7 +60,11 @@ class PortfolioService:
             try:
                 mds = MarketDataService()
                 quotes = await mds.get_quotes(tickers)
-                price_map = {q["ticker"]: q["price"] for q in quotes}
+                price_map = {
+                    q["ticker"]: q["price"]
+                    for q in quotes
+                    if q.get("price") is not None and math.isfinite(float(q["price"]))
+                }
                 for pos in positions:
                     cp = price_map.get(pos.ticker)
                     if cp:
@@ -175,7 +179,7 @@ class PortfolioService:
         price_map: dict[str, float] = {}
         uncached = []
         for p in positions:
-            if p.current_price is not None:
+            if p.current_price is not None and math.isfinite(float(p.current_price)):
                 price_map[p.ticker] = float(p.current_price)
             else:
                 uncached.append(p.ticker)
@@ -185,7 +189,9 @@ class PortfolioService:
             try:
                 quotes = await mds.get_quotes(uncached)
                 for q in quotes:
-                    price_map[q["ticker"]] = q["price"]
+                    price = q.get("price")
+                    if price is not None and math.isfinite(float(price)):
+                        price_map[q["ticker"]] = price
             except Exception:
                 pass
 
