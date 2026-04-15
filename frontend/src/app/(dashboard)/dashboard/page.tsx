@@ -181,31 +181,32 @@ function SignalRow({ signal }: { signal: Signal }) {
               {"★".repeat(signal.strength)}{"☆".repeat(5 - signal.strength)}
             </span>
             <span className="text-xs text-muted-foreground">{signal.signal_type.replace("_", " ")}</span>
+            {signal.timeframe && (
+              <span className="text-xs text-muted-foreground">{signal.timeframe}</span>
+            )}
           </div>
-          <p className={`text-sm text-muted-foreground mt-1 ${expanded ? "" : "truncate"}`}>
-            {signal.rationale}
-          </p>
+          {/* Entry / SL / TP — always visible */}
+          {signal.entry_price && (
+            <div className="flex gap-4 text-xs mt-1">
+              <div>Entry <span className="font-medium text-foreground">{formatCurrency(signal.entry_price)}</span></div>
+              {signal.stop_loss && <div>SL <span className="font-medium text-red-400">{formatCurrency(signal.stop_loss)}</span></div>}
+              {signal.take_profit && <div>TP <span className="font-medium text-emerald-400">{formatCurrency(signal.take_profit)}</span></div>}
+            </div>
+          )}
         </div>
         <ChevronDown
           className={`w-4 h-4 text-muted-foreground shrink-0 mt-0.5 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
         />
       </div>
 
-      {/* Expanded details */}
+      {/* Expanded — rationale + indicators */}
       {expanded && (
-        <div className="mt-3 pt-3 border-t border-border space-y-2">
+        <div className="mt-3 pt-3 border-t border-border space-y-1.5">
+          {signal.rationale && (
+            <p className="text-sm text-muted-foreground">{signal.rationale}</p>
+          )}
           {signal.indicators && (
-            <p className="text-xs text-muted-foreground font-mono">{signal.indicators}</p>
-          )}
-          {signal.entry_price && (
-            <div className="flex gap-4 text-xs">
-              <div>Entry <span className="font-medium text-foreground">{formatCurrency(signal.entry_price)}</span></div>
-              {signal.stop_loss && <div>SL <span className="font-medium text-red-400">{formatCurrency(signal.stop_loss)}</span></div>}
-              {signal.take_profit && <div>TP <span className="font-medium text-emerald-400">{formatCurrency(signal.take_profit)}</span></div>}
-            </div>
-          )}
-          {signal.timeframe && (
-            <p className="text-xs text-muted-foreground">Timeframe: <span className="text-foreground">{signal.timeframe}</span></p>
+            <p className="text-xs text-muted-foreground/60 font-mono">{signal.indicators}</p>
           )}
         </div>
       )}
