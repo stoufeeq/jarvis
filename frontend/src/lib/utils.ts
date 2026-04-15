@@ -5,6 +5,29 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  SGD: "S$",
+  HKD: "HK$",
+  CAD: "CA$",
+  AUD: "A$",
+  NZD: "NZ$",
+};
+
+/** Returns a short display label for a currency code, e.g. "SGD" → "S$", "USD" → "$". */
+export function currencyLabel(currency: string): string {
+  if (CURRENCY_SYMBOLS[currency]) return CURRENCY_SYMBOLS[currency];
+  // For well-known symbols the browser can resolve (USD→$, EUR→€, GBP→£, JPY→¥)
+  try {
+    const parts = new Intl.NumberFormat("en-US", { style: "currency", currency })
+      .formatToParts(0);
+    const sym = parts.find((p) => p.type === "currency")?.value;
+    if (sym && sym !== currency) return sym;
+  } catch {
+    // ignore
+  }
+  return currency;
+}
+
 export function formatCurrency(value: number | null | undefined, currency = "USD"): string {
   if (value == null) return "—";
   return new Intl.NumberFormat("en-US", {

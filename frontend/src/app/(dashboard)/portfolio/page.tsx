@@ -3,7 +3,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { portfolioApi, marketApi } from "@/lib/api";
-import { formatCurrency, formatPct, pnlColor } from "@/lib/utils";
+import { formatCurrency, formatPct, pnlColor, currencyLabel } from "@/lib/utils";
 import { useCurrencyDisplay } from "@/hooks/useCurrencyDisplay";
 import { CurrencySwitcher } from "@/components/ui/CurrencySwitcher";
 import { PrivacyToggle } from "@/components/ui/PrivacyToggle";
@@ -485,18 +485,18 @@ export default function PortfolioPage() {
               <SummaryCard
                 label="Total Portfolio Value"
                 value={mv(formatCurrency(convert(summary?.total_value), displayCurrency))}
-                note={isPrivate ? undefined : displayCurrency}
+                note={isPrivate ? undefined : currencyLabel(displayCurrency)}
               />
               <SummaryCard
                 label="Total Cost"
                 value={mv(formatCurrency(convert(summary?.total_cost), displayCurrency))}
-                note={isPrivate ? undefined : displayCurrency}
+                note={isPrivate ? undefined : currencyLabel(displayCurrency)}
               />
               <SummaryCard
                 label="Unrealized P&L"
                 value={mv(formatCurrency(convert(summary?.total_pnl), displayCurrency))}
                 valueClass={isPrivate ? undefined : pnlColor(summary?.total_pnl)}
-                note={isPrivate ? undefined : displayCurrency}
+                note={isPrivate ? undefined : currencyLabel(displayCurrency)}
               />
               <SummaryCard
                 label="Return"

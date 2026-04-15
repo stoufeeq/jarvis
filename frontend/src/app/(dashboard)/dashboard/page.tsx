@@ -2,7 +2,7 @@
 
 import { useQuery, useQueries } from "@tanstack/react-query";
 import { portfolioApi, signalsApi, accountsApi, marketApi } from "@/lib/api";
-import { formatCurrency, formatPct, pnlColor } from "@/lib/utils";
+import { formatCurrency, formatPct, pnlColor, currencyLabel } from "@/lib/utils";
 import { useCurrencyDisplay } from "@/hooks/useCurrencyDisplay";
 import { CurrencySwitcher } from "@/components/ui/CurrencySwitcher";
 import { PrivacyToggle } from "@/components/ui/PrivacyToggle";
@@ -91,19 +91,19 @@ export default function DashboardPage() {
         <StatCard
           label="Total Value"
           value={mv(formatCurrency(convert(totalValue), displayCurrency))}
-          note={isPrivate ? undefined : displayCurrency}
+          note={isPrivate ? undefined : currencyLabel(displayCurrency)}
         />
         <StatCard
           label="Liquidity"
           value={mv(formatCurrency(convert(liquidityUsd), displayCurrency))}
-          note={isPrivate ? undefined : displayCurrency}
+          note={isPrivate ? undefined : currencyLabel(displayCurrency)}
           valueClass="text-sky-400"
         />
         <StatCard
           label="Unrealized P&L"
           value={mv(formatCurrency(convert(totalPnl), displayCurrency))}
           valueClass={isPrivate ? undefined : pnlColor(totalPnl)}
-          note={isPrivate ? undefined : displayCurrency}
+          note={isPrivate ? undefined : currencyLabel(displayCurrency)}
         />
         <StatCard
           label="Today's Change"
