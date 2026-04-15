@@ -6,7 +6,7 @@ import { watchlistApi, marketApi, signalsApi } from "@/lib/api";
 import { TickerSearch } from "@/components/ui/TickerSearch";
 import { InlineChart } from "@/components/charts/InlineChart";
 import { formatCurrency, pnlColor } from "@/lib/utils";
-import type { Quote } from "@/types";
+import type { Quote, WatchlistItem } from "@/types";
 import toast from "react-hot-toast";
 
 export default function WatchlistPage() {
@@ -31,9 +31,11 @@ export default function WatchlistPage() {
   });
 
   const watchlist = watchlists[0];
-  const tickers = watchlist?.items?.map((i: { ticker: string }) => i.ticker) ?? [];
+  const items: WatchlistItem[] = watchlist?.items ?? [];
+  const tickers = items.map((i) => i.ticker);
 
-  const { data: quotes = [] } = useQuery<Quote[]>({
+  // Live quotes overlay — fetched every 30 s, but not required for display
+  const { data: liveQuotes = [] } = useQuery<Quote[]>({
     queryKey: ["quotes", tickers],
     queryFn: () =>
       tickers.length > 0
@@ -43,7 +45,25 @@ export default function WatchlistPage() {
     refetchInterval: 30_000,
   });
 
-  const quoteMap = Object.fromEntries(quotes.map((q) => [q.ticker, q]));
+  const liveMap = Object.fromEntries(liveQuotes.map((q) => [q.ticker, q]));
+
+  // Merge: live quote takes priority; fall back to DB-cached fields on the item
+  function getQuote(item: WatchlistItem): Quote | null {
+    const live = liveMap[item.ticker];
+    if (live) return live;
+    if (item.last_price == null) return null;
+    return {
+      ticker: item.ticker,
+      price: item.last_price,
+      previous_close: item.previous_close ?? item.last_price,
+      change: item.last_change ?? 0,
+      change_pct: item.last_change_pct ?? 0,
+      volume: 0,
+      market_cap: null,
+      fifty_two_week_high: item.fifty_two_week_high ?? item.last_price,
+      fifty_two_week_low: item.fifty_two_week_low ?? item.last_price,
+    };
+  }
 
   const createWatchlist = useMutation({
     mutationFn: () => watchlistApi.create("Main"),
@@ -121,14 +141,14 @@ export default function WatchlistPage() {
 
       {isLoading && <p className="text-muted-foreground text-sm">Loading…</p>}
 
-      {tickers.length === 0 && !isLoading && (
+      {items.length === 0 && !isLoading && (
         <div className="rounded-xl border border-dashed border-border p-10 text-center text-muted-foreground text-sm">
           Your watchlist is empty. Add tickers above to track prices and get signals.
         </div>
       )}
 
       {/* Watchlist table */}
-      {tickers.length > 0 && (
+      {items.length > 0 && (
         <div className="rounded-xl border border-border overflow-hidden overflow-x-auto">
           <table className="w-full text-sm min-w-[540px]">
             <thead>
@@ -152,23 +172,26 @@ export default function WatchlistPage() {
               </tr>
             </thead>
             <tbody>
-              {[...tickers]
+              {[...items]
                 .sort((a, b) => {
-                  const qa = quoteMap[a];
-                  const qb = quoteMap[b];
+                  const qa = getQuote(a);
+                  const qb = getQuote(b);
                   let av: string | number;
                   let bv: string | number;
                   if (sort.col === "ticker") {
-                    av = a; bv = b;
+                    av = a.ticker; bv = b.ticker;
                   } else {
-                    av = (qa as unknown as Record<string, number> | undefined)?.[sort.col] ?? -Infinity;
-                    bv = (qb as unknown as Record<string, number> | undefined)?.[sort.col] ?? -Infinity;
+                    av = (qa as unknown as Record<string, number> | null)?.[sort.col] ?? -Infinity;
+                    bv = (qb as unknown as Record<string, number> | null)?.[sort.col] ?? -Infinity;
                   }
                   const cmp = typeof av === "string" ? av.localeCompare(bv as string) : (av as number) - (bv as number);
                   return sort.dir === "asc" ? cmp : -cmp;
                 })
-                .flatMap((ticker: string) => {
-                  const q = quoteMap[ticker];
+                .flatMap((item: WatchlistItem) => {
+                  const ticker = item.ticker;
+                  const q = getQuote(item);
+                  const isLive = !!liveMap[ticker];
+                  const isStale = !isLive && item.price_updated_at != null;
                   const isExpanded = expandedTicker === ticker;
                   return [
                     <tr key={ticker} className={`border-b border-border/50 hover:bg-secondary/20 ${isExpanded ? "bg-secondary/10" : ""}`}>
@@ -184,7 +207,12 @@ export default function WatchlistPage() {
                         </button>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        {q ? formatCurrency(q.price) : "—"}
+                        {q ? (
+                          <span title={isStale && item.price_updated_at ? `Last updated: ${new Date(item.price_updated_at).toLocaleString()}` : undefined}>
+                            {formatCurrency(q.price)}
+                            {isStale && <span className="ml-1 text-xs text-muted-foreground/50">●</span>}
+                          </span>
+                        ) : "—"}
                       </td>
                       <td className={`px-4 py-3 text-right ${q ? pnlColor(q.change) : ""}`}>
                         {q ? `${q.change >= 0 ? "+" : ""}${q.change_pct.toFixed(2)}%` : "—"}
@@ -216,7 +244,7 @@ export default function WatchlistPage() {
                     isExpanded && (
                       <tr key={`${ticker}-chart`}>
                         <td colSpan={6} className="p-0 border-b border-border">
-                          <InlineChart ticker={ticker} quote={q} />
+                          <InlineChart ticker={ticker} quote={q ?? undefined} />
                         </td>
                       </tr>
                     ),

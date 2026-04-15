@@ -76,6 +76,20 @@ export interface Alert {
   created_at: string;
 }
 
+export interface WatchlistItem {
+  id: number;
+  ticker: string;
+  notes: string | null;
+  created_at: string;
+  last_price: number | null;
+  last_change: number | null;
+  last_change_pct: number | null;
+  previous_close: number | null;
+  fifty_two_week_high: number | null;
+  fifty_two_week_low: number | null;
+  price_updated_at: string | null;
+}
+
 export interface Quote {
   ticker: string;
   price: number;

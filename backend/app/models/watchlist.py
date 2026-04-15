@@ -1,4 +1,6 @@
-from sqlalchemy import ForeignKey, String, UniqueConstraint
+from datetime import datetime
+
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -28,5 +30,16 @@ class WatchlistItem(TimestampMixin, Base):
     )
     ticker: Mapped[str] = mapped_column(String(20), nullable=False)
     notes: Mapped[str | None] = mapped_column(String(500))
+
+    # DB-cached price data — refreshed by Celery every 5 min
+    last_price: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
+    last_change: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    last_change_pct: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True)
+    previous_close: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
+    fifty_two_week_high: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
+    fifty_two_week_low: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
+    price_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     watchlist: Mapped["Watchlist"] = relationship(back_populates="items")
