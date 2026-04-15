@@ -19,6 +19,8 @@ class WatchlistItemRead(BaseModel):
     previous_close: float | None = None
     fifty_two_week_high: float | None = None
     fifty_two_week_low: float | None = None
+    pe_ratio: float | None = None
+    rsi14: float | None = None
     price_updated_at: datetime | None = None
 
     model_config = {"from_attributes": True}

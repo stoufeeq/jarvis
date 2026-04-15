@@ -6,7 +6,9 @@ import asyncio
 import math
 from datetime import datetime, timezone
 
+import yfinance as yf
 from sqlalchemy import select
+from ta.momentum import RSIIndicator
 
 from app.database import AsyncSessionLocal
 from app.models.portfolio import Position
@@ -62,6 +64,9 @@ async def _refresh_all_prices():
                 pos.unrealized_pnl_pct = round((cp - avg_cost) / avg_cost * 100, 2) if avg_cost else 0
 
         # Update watchlist item price cache
+        watchlist_tickers = list({w.ticker for w in watchlist_items})
+        pe_rsi_map = await _fetch_pe_rsi_batch(watchlist_tickers)
+
         for item in watchlist_items:
             q = quote_map.get(item.ticker)
             if not q:
@@ -72,6 +77,49 @@ async def _refresh_all_prices():
             item.previous_close = _safe_price(q.get("previous_close"))
             item.fifty_two_week_high = _safe_price(q.get("fifty_two_week_high"))
             item.fifty_two_week_low = _safe_price(q.get("fifty_two_week_low"))
+            pe, rsi = pe_rsi_map.get(item.ticker, (None, None))
+            item.pe_ratio = pe
+            item.rsi14 = rsi
             item.price_updated_at = now
 
         await db.commit()
+
+
+async def _fetch_pe_rsi_batch(tickers: list[str]) -> dict[str, tuple[float | None, float | None]]:
+    """Fetch P/E ratio and RSI14 for a list of tickers in parallel."""
+    if not tickers:
+        return {}
+    loop = asyncio.get_event_loop()
+    tasks = [loop.run_in_executor(None, _fetch_pe_rsi_sync, t) for t in tickers]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    return {
+        ticker: (result if not isinstance(result, Exception) else (None, None))
+        for ticker, result in zip(tickers, results)
+    }
+
+
+def _fetch_pe_rsi_sync(ticker: str) -> tuple[float | None, float | None]:
+    """Synchronous: fetch P/E from Ticker.info and compute RSI14 from 1-month OHLCV."""
+    pe: float | None = None
+    rsi: float | None = None
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info
+        raw_pe = info.get("trailingPE") or info.get("forwardPE")
+        if raw_pe is not None:
+            try:
+                f = float(raw_pe)
+                if math.isfinite(f) and f > 0:
+                    pe = round(f, 2)
+            except (TypeError, ValueError):
+                pass
+
+        df = t.history(period="3mo", interval="1d")
+        if df is not None and len(df) >= 15:
+            rsi_series = RSIIndicator(df["Close"], window=14).rsi()
+            last = rsi_series.iloc[-1]
+            if last is not None and math.isfinite(float(last)):
+                rsi = round(float(last), 2)
+    except Exception:
+        pass
+    return pe, rsi

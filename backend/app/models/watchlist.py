@@ -38,6 +38,8 @@ class WatchlistItem(TimestampMixin, Base):
     previous_close: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
     fifty_two_week_high: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
     fifty_two_week_low: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
+    pe_ratio: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    rsi14: Mapped[float | None] = mapped_column(Numeric(6, 2), nullable=True)
     price_updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

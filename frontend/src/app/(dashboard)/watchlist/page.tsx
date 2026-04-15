@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { SlidersHorizontal } from "lucide-react";
 import { watchlistApi, marketApi, signalsApi } from "@/lib/api";
 import { TickerSearch } from "@/components/ui/TickerSearch";
 import { InlineChart } from "@/components/charts/InlineChart";
@@ -9,12 +10,49 @@ import { formatCurrency, pnlColor } from "@/lib/utils";
 import type { Quote, WatchlistItem } from "@/types";
 import toast from "react-hot-toast";
 
+type ColKey = "change" | "high52" | "low52" | "pe" | "rsi14";
+
+const ALL_COLS: { key: ColKey; label: string }[] = [
+  { key: "change", label: "Change" },
+  { key: "high52", label: "52W High" },
+  { key: "low52", label: "52W Low" },
+  { key: "pe", label: "P/E" },
+  { key: "rsi14", label: "RSI 14" },
+];
+
+const STORAGE_KEY = "jarvis_watchlist_cols";
+const DEFAULT_VISIBLE: ColKey[] = ["change", "high52", "low52", "pe", "rsi14"];
+
+function loadVisibleCols(): ColKey[] {
+  if (typeof window === "undefined") return DEFAULT_VISIBLE;
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) return JSON.parse(stored) as ColKey[];
+  } catch {}
+  return DEFAULT_VISIBLE;
+}
+
 export default function WatchlistPage() {
   const qc = useQueryClient();
   const [newTicker, setNewTicker] = useState("");
   const [scanning, setScanning] = useState<string | null>(null);
   const [sort, setSort] = useState<{ col: string; dir: "asc" | "desc" }>({ col: "ticker", dir: "asc" });
   const [expandedTicker, setExpandedTicker] = useState<string | null>(null);
+  const [visibleCols, setVisibleCols] = useState<ColKey[]>(DEFAULT_VISIBLE);
+  const [colPickerOpen, setColPickerOpen] = useState(false);
+
+  // Load persisted column visibility after mount
+  useEffect(() => {
+    setVisibleCols(loadVisibleCols());
+  }, []);
+
+  function toggleCol(key: ColKey) {
+    setVisibleCols((prev) => {
+      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
 
   function toggleSort(col: string) {
     setSort((s) => ({ col, dir: s.col === col && s.dir === "asc" ? "desc" : "asc" }));
@@ -34,7 +72,7 @@ export default function WatchlistPage() {
   const items: WatchlistItem[] = watchlist?.items ?? [];
   const tickers = items.map((i) => i.ticker);
 
-  // Live quotes overlay — fetched every 30 s, but not required for display
+  // Live quotes overlay — fetched every 30 s
   const { data: liveQuotes = [] } = useQuery<Quote[]>({
     queryKey: ["quotes", tickers],
     queryFn: () =>
@@ -113,9 +151,19 @@ export default function WatchlistPage() {
     }
   };
 
-  const handleTickerClick = (ticker: string) => {
-    setExpandedTicker((prev) => (prev === ticker ? null : ticker));
-  };
+  // RSI colour helper
+  function rsiColor(rsi: number | null) {
+    if (rsi == null) return "";
+    if (rsi >= 70) return "text-red-400";
+    if (rsi <= 30) return "text-emerald-400";
+    return "text-muted-foreground";
+  }
+
+  // Build the visible column definitions in order
+  const activeCols = ALL_COLS.filter((c) => visibleCols.includes(c.key));
+
+  // Total cols: Ticker + Price + activeCols + Actions
+  const totalColSpan = 2 + activeCols.length + 1;
 
   return (
     <div className="space-y-6">
@@ -150,22 +198,59 @@ export default function WatchlistPage() {
       {/* Watchlist table */}
       {items.length > 0 && (
         <div className="rounded-xl border border-border overflow-hidden overflow-x-auto">
-          <table className="w-full text-sm min-w-[540px]">
+          {/* Column toggle toolbar */}
+          <div className="flex items-center justify-end gap-2 px-4 py-2 border-b border-border bg-secondary/30">
+            <div className="relative">
+              <button
+                onClick={() => setColPickerOpen((o) => !o)}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded hover:bg-secondary transition-colors"
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+                Columns
+              </button>
+              {colPickerOpen && (
+                <div className="absolute right-0 top-full mt-1 z-20 bg-card border border-border rounded-lg shadow-lg p-3 min-w-[160px]">
+                  <p className="text-xs font-medium text-muted-foreground mb-2">Show / hide columns</p>
+                  {ALL_COLS.map((col) => (
+                    <label key={col.key} className="flex items-center gap-2 py-1 cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={visibleCols.includes(col.key)}
+                        onChange={() => toggleCol(col.key)}
+                        className="accent-primary"
+                      />
+                      <span className="text-sm group-hover:text-foreground text-muted-foreground">
+                        {col.label}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-secondary/50">
-                {[
-                  { col: "ticker", label: "Ticker", align: "left" },
-                  { col: "price", label: "Price", align: "right" },
-                  { col: "change_pct", label: "Change", align: "right" },
-                  { col: "fifty_two_week_high", label: "52W High", align: "right" },
-                  { col: "fifty_two_week_low", label: "52W Low", align: "right" },
-                ].map(({ col, label, align }) => (
+                <th
+                  onClick={() => toggleSort("ticker")}
+                  className="px-4 py-3 font-medium text-muted-foreground cursor-pointer select-none hover:text-foreground text-left"
+                >
+                  Ticker {sortIcon("ticker")}
+                </th>
+                <th
+                  onClick={() => toggleSort("price")}
+                  className="px-4 py-3 font-medium text-muted-foreground cursor-pointer select-none hover:text-foreground text-right"
+                >
+                  Price {sortIcon("price")}
+                </th>
+                {activeCols.map((col) => (
                   <th
-                    key={col}
-                    onClick={() => toggleSort(col)}
-                    className={`px-4 py-3 font-medium text-muted-foreground cursor-pointer select-none hover:text-foreground text-${align}`}
+                    key={col.key}
+                    onClick={() => toggleSort(col.key)}
+                    className="px-4 py-3 font-medium text-muted-foreground cursor-pointer select-none hover:text-foreground text-right"
                   >
-                    {label} {sortIcon(col)}
+                    {col.label} {sortIcon(col.key)}
                   </th>
                 ))}
                 <th className="px-4 py-3" />
@@ -180,6 +265,12 @@ export default function WatchlistPage() {
                   let bv: string | number;
                   if (sort.col === "ticker") {
                     av = a.ticker; bv = b.ticker;
+                  } else if (sort.col === "pe") {
+                    av = a.pe_ratio ?? -Infinity;
+                    bv = b.pe_ratio ?? -Infinity;
+                  } else if (sort.col === "rsi14") {
+                    av = a.rsi14 ?? -Infinity;
+                    bv = b.rsi14 ?? -Infinity;
                   } else {
                     av = (qa as unknown as Record<string, number> | null)?.[sort.col] ?? -Infinity;
                     bv = (qb as unknown as Record<string, number> | null)?.[sort.col] ?? -Infinity;
@@ -194,13 +285,19 @@ export default function WatchlistPage() {
                   const isStale = !isLive && item.price_updated_at != null;
                   const isExpanded = expandedTicker === ticker;
                   return [
-                    <tr key={ticker} className={`border-b border-border/50 hover:bg-secondary/20 ${isExpanded ? "bg-secondary/10" : ""}`}>
+                    <tr
+                      key={ticker}
+                      className={`border-b border-border/50 hover:bg-secondary/20 ${isExpanded ? "bg-secondary/10" : ""}`}
+                    >
                       <td className="px-4 py-3 font-semibold">
                         <button
-                          onClick={() => handleTickerClick(ticker)}
+                          onClick={() => setExpandedTicker((prev) => (prev === ticker ? null : ticker))}
                           className="flex items-center gap-1.5 hover:text-primary transition-colors"
                         >
-                          <span className="text-xs text-muted-foreground/50 transition-transform duration-200" style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}>
+                          <span
+                            className="text-xs text-muted-foreground/50 transition-transform duration-200"
+                            style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
+                          >
                             ▶
                           </span>
                           {ticker}
@@ -208,21 +305,59 @@ export default function WatchlistPage() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         {q ? (
-                          <span title={isStale && item.price_updated_at ? `Last updated: ${new Date(item.price_updated_at).toLocaleString()}` : undefined}>
+                          <span
+                            title={
+                              isStale && item.price_updated_at
+                                ? `Last updated: ${new Date(item.price_updated_at).toLocaleString()}`
+                                : undefined
+                            }
+                          >
                             {formatCurrency(q.price)}
                             {isStale && <span className="ml-1 text-xs text-muted-foreground/50">●</span>}
                           </span>
                         ) : "—"}
                       </td>
-                      <td className={`px-4 py-3 text-right ${q ? pnlColor(q.change) : ""}`}>
-                        {q ? `${q.change >= 0 ? "+" : ""}${q.change_pct.toFixed(2)}%` : "—"}
-                      </td>
-                      <td className="px-4 py-3 text-right text-muted-foreground">
-                        {q ? formatCurrency(q.fifty_two_week_high) : "—"}
-                      </td>
-                      <td className="px-4 py-3 text-right text-muted-foreground">
-                        {q ? formatCurrency(q.fifty_two_week_low) : "—"}
-                      </td>
+
+                      {/* Dynamic columns */}
+                      {activeCols.map((col) => {
+                        if (col.key === "change") {
+                          return (
+                            <td key="change" className={`px-4 py-3 text-right ${q ? pnlColor(q.change) : ""}`}>
+                              {q ? `${q.change >= 0 ? "+" : ""}${q.change_pct.toFixed(2)}%` : "—"}
+                            </td>
+                          );
+                        }
+                        if (col.key === "high52") {
+                          return (
+                            <td key="high52" className="px-4 py-3 text-right text-muted-foreground">
+                              {q ? formatCurrency(q.fifty_two_week_high) : "—"}
+                            </td>
+                          );
+                        }
+                        if (col.key === "low52") {
+                          return (
+                            <td key="low52" className="px-4 py-3 text-right text-muted-foreground">
+                              {q ? formatCurrency(q.fifty_two_week_low) : "—"}
+                            </td>
+                          );
+                        }
+                        if (col.key === "pe") {
+                          return (
+                            <td key="pe" className="px-4 py-3 text-right text-muted-foreground">
+                              {item.pe_ratio != null ? item.pe_ratio.toFixed(1) : "—"}
+                            </td>
+                          );
+                        }
+                        if (col.key === "rsi14") {
+                          return (
+                            <td key="rsi14" className={`px-4 py-3 text-right font-medium ${rsiColor(item.rsi14)}`}>
+                              {item.rsi14 != null ? item.rsi14.toFixed(1) : "—"}
+                            </td>
+                          );
+                        }
+                        return null;
+                      })}
+
                       <td className="px-4 py-3 text-right">
                         <div className="flex gap-2 justify-end">
                           <button
@@ -243,7 +378,7 @@ export default function WatchlistPage() {
                     </tr>,
                     isExpanded && (
                       <tr key={`${ticker}-chart`}>
-                        <td colSpan={6} className="p-0 border-b border-border">
+                        <td colSpan={totalColSpan} className="p-0 border-b border-border">
                           <InlineChart ticker={ticker} quote={q ?? undefined} />
                         </td>
                       </tr>
@@ -254,7 +389,11 @@ export default function WatchlistPage() {
           </table>
         </div>
       )}
+
+      {/* Close col picker when clicking outside */}
+      {colPickerOpen && (
+        <div className="fixed inset-0 z-10" onClick={() => setColPickerOpen(false)} />
+      )}
     </div>
   );
 }
-

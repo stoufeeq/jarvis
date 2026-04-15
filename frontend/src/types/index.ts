@@ -87,6 +87,8 @@ export interface WatchlistItem {
   previous_close: number | null;
   fifty_two_week_high: number | null;
   fifty_two_week_low: number | null;
+  pe_ratio: number | null;
+  rsi14: number | null;
   price_updated_at: string | null;
 }
 
