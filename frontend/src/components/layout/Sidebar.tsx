@@ -10,7 +10,6 @@ import {
   Bell,
   BookOpen,
   MessageSquare,
-  Settings,
   LogOut,
   Wallet,
   LayoutGrid,
@@ -27,7 +26,6 @@ const NAV = [
   { href: "/heatmap", label: "Heatmap", icon: LayoutGrid },
   { href: "/alerts", label: "Alerts", icon: Bell },
   { href: "/advisor", label: "AI Advisor", icon: MessageSquare },
-  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 export function Sidebar() {

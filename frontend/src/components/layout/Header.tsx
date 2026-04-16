@@ -1,7 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { LogOut } from "lucide-react";
+import Link from "next/link";
+import { LogOut, Settings } from "lucide-react";
 import { useAuthStore } from "@/store/auth";
 import { NotificationBell } from "@/components/ui/NotificationBell";
 
@@ -23,6 +24,13 @@ export function Header() {
       <div className="hidden md:block" /> {/* spacer on desktop */}
       <div className="flex items-center gap-3">
         <NotificationBell />
+        <Link
+          href="/settings"
+          className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+          title="Settings"
+        >
+          <Settings className="w-4 h-4" />
+        </Link>
         <span className="text-sm text-muted-foreground hidden sm:inline">
           {user?.full_name ?? user?.email ?? ""}
         </span>
