@@ -8,7 +8,6 @@ import {
   BookOpen,
   TrendingUp,
   Bell,
-  MessageSquare,
   Wallet,
   LayoutGrid,
 } from "lucide-react";
@@ -22,7 +21,6 @@ const NAV = [
   { href: "/signals", label: "Signals", icon: TrendingUp },
   { href: "/heatmap", label: "Heatmap", icon: LayoutGrid },
   { href: "/alerts", label: "Alerts", icon: Bell },
-  { href: "/advisor", label: "Advisor", icon: MessageSquare },
 ];
 
 export function BottomNav() {

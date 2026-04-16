@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
 import { BottomNav } from "@/components/layout/BottomNav";
+import { AdvisorFAB } from "@/components/layout/AdvisorFAB";
 import { useAuthStore } from "@/store/auth";
 import { useQueryClient } from "@tanstack/react-query";
 import { alertsApi } from "@/lib/api";
@@ -90,6 +91,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </div>
       {/* Bottom nav — mobile only */}
       <BottomNav />
+      {/* AI Advisor FAB — mobile only, floats above bottom nav */}
+      <AdvisorFAB />
     </div>
   );
 }
