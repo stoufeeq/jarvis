@@ -3,7 +3,7 @@ set -e
 
 case "${COMMAND:-api}" in
   worker)
-    exec celery -A app.workers.celery_app worker --loglevel=warning
+    exec celery -A app.workers.celery_app worker --loglevel=warning -Q celery,market_data,signals,default
     ;;
   beat)
     exec celery -A app.workers.celery_app beat --loglevel=warning
