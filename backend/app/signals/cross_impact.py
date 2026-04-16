@@ -26,7 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models.news_item import NewsItem
+from app.models.news import NewsItem
 from app.models.signal import Signal, SignalDirection, SignalType
 from app.signals.base import BaseSignalProvider
 

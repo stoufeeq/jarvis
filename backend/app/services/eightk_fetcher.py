@@ -34,7 +34,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.news_item import NewsItem
+from app.models.news import NewsItem
 
 log = logging.getLogger(__name__)
 

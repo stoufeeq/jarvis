@@ -57,7 +57,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.briefing import DailyBriefing
-from app.models.news_item import NewsItem
+from app.models.news import NewsItem
 from app.models.signal import Signal
 from app.models.user import User
 
@@ -275,7 +275,7 @@ class BriefingService:
         ]
 
         return {
-            "date": str(today),
+            "date": str(datetime.now(UTC).date()),
             "portfolios": portfolio_context,
             "watchlist_tickers": watchlist_tickers,
             "signals_by_ticker": signals_by_ticker,

@@ -52,7 +52,7 @@ SP500: list[dict] = [
     {"ticker": "AKAM",  "name": "Akamai",                "sector": "Information Technology", "weight": 0.1},
     {"ticker": "FSLR",  "name": "First Solar",           "sector": "Information Technology", "weight": 0.1},
     {"ticker": "KEYS",  "name": "Keysight Technologies", "sector": "Information Technology", "weight": 0.1},
-    {"ticker": "ANSS",  "name": "Ansys",                 "sector": "Information Technology", "weight": 0.1},
+    {"ticker": "MANH",  "name": "Manhattan Associates",  "sector": "Information Technology", "weight": 0.1},
     {"ticker": "PTC",   "name": "PTC Inc",               "sector": "Information Technology", "weight": 0.1},
     {"ticker": "NTAP",  "name": "NetApp",                "sector": "Information Technology", "weight": 0.1},
     {"ticker": "STX",   "name": "Seagate",               "sector": "Information Technology", "weight": 0.1},
@@ -147,7 +147,7 @@ SP500: list[dict] = [
     {"ticker": "ICE",   "name": "Intercontinental Exch", "sector": "Financials", "weight": 0.3},
     {"ticker": "SCHW",  "name": "Charles Schwab",        "sector": "Financials", "weight": 0.3},
     {"ticker": "AON",   "name": "Aon",                   "sector": "Financials", "weight": 0.3},
-    {"ticker": "MMC",   "name": "Marsh & McLennan",      "sector": "Financials", "weight": 0.3},
+    {"ticker": "MMC",   "name": "Marsh & McLennan",      "sector": "Financials", "weight": 0.3},   # still trades on NYSE
     {"ticker": "APO",   "name": "Apollo Global Mgmt",    "sector": "Financials", "weight": 0.2},
     {"ticker": "MSCI",  "name": "MSCI Inc",              "sector": "Financials", "weight": 0.2},
     {"ticker": "NDAQ",  "name": "Nasdaq Inc",            "sector": "Financials", "weight": 0.2},
@@ -162,7 +162,7 @@ SP500: list[dict] = [
     {"ticker": "AJG",   "name": "Arthur J. Gallagher",   "sector": "Financials", "weight": 0.2},
     {"ticker": "AFL",   "name": "Aflac",                 "sector": "Financials", "weight": 0.2},
     {"ticker": "ALL",   "name": "Allstate",              "sector": "Financials", "weight": 0.2},
-    {"ticker": "DFS",   "name": "Discover Financial",    "sector": "Financials", "weight": 0.2},
+    {"ticker": "FNF",   "name": "Fidelity National Fin", "sector": "Financials", "weight": 0.1},
     {"ticker": "AIG",   "name": "AIG",                   "sector": "Financials", "weight": 0.1},
     {"ticker": "SYF",   "name": "Synchrony Financial",   "sector": "Financials", "weight": 0.1},
     {"ticker": "FITB",  "name": "Fifth Third Bancorp",   "sector": "Financials", "weight": 0.1},
@@ -183,7 +183,7 @@ SP500: list[dict] = [
     {"ticker": "CPAY",  "name": "Corpay",                "sector": "Financials", "weight": 0.1},
     {"ticker": "AIZ",   "name": "Assurant",              "sector": "Financials", "weight": 0.05},
     {"ticker": "ZION",  "name": "Zions Bancorporation",  "sector": "Financials", "weight": 0.05},
-    {"ticker": "CMA",   "name": "Comerica",              "sector": "Financials", "weight": 0.05},
+    {"ticker": "FHN",   "name": "First Horizon",         "sector": "Financials", "weight": 0.05},
 
     # ── Consumer Discretionary (~50 stocks) ──────────────────────────────────
     {"ticker": "AMZN",  "name": "Amazon",                "sector": "Consumer Discretionary", "weight": 3.8},
@@ -255,8 +255,7 @@ SP500: list[dict] = [
     {"ticker": "WBD",   "name": "Warner Bros. Discovery","sector": "Communication Services", "weight": 0.1},
     {"ticker": "LYV",   "name": "Live Nation",           "sector": "Communication Services", "weight": 0.1},
     {"ticker": "OMC",   "name": "Omnicom",               "sector": "Communication Services", "weight": 0.1},
-    {"ticker": "IPG",   "name": "Interpublic Group",     "sector": "Communication Services", "weight": 0.05},
-    {"ticker": "PARA",  "name": "Paramount Global",      "sector": "Communication Services", "weight": 0.05},
+    {"ticker": "IPG",   "name": "Interpublic Group",     "sector": "Communication Services", "weight": 0.05},   # still trades; OMC merger pending
     {"ticker": "NWSA",  "name": "News Corp A",           "sector": "Communication Services", "weight": 0.05},
     {"ticker": "NWS",   "name": "News Corp B",           "sector": "Communication Services", "weight": 0.03},
     {"ticker": "MTCH",  "name": "Match Group",           "sector": "Communication Services", "weight": 0.05},
@@ -362,7 +361,7 @@ SP500: list[dict] = [
     {"ticker": "SJM",   "name": "J.M. Smucker",          "sector": "Consumer Staples", "weight": 0.05},
     {"ticker": "LW",    "name": "Lamb Weston",           "sector": "Consumer Staples", "weight": 0.05},
     {"ticker": "BG",    "name": "Bunge Global",          "sector": "Consumer Staples", "weight": 0.05},
-    {"ticker": "K",     "name": "Kellanova",             "sector": "Consumer Staples", "weight": 0.1},
+    {"ticker": "CAG",   "name": "Conagra Brands",        "sector": "Consumer Staples", "weight": 0.1},
     {"ticker": "HSY",   "name": "Hershey",               "sector": "Consumer Staples", "weight": 0.1},
     {"ticker": "DG",    "name": "Dollar General",        "sector": "Consumer Staples", "weight": 0.1},
     {"ticker": "DLTR",  "name": "Dollar Tree",           "sector": "Consumer Staples", "weight": 0.1},
@@ -377,7 +376,7 @@ SP500: list[dict] = [
     {"ticker": "MPC",   "name": "Marathon Petroleum",    "sector": "Energy", "weight": 0.2},
     {"ticker": "PSX",   "name": "Phillips 66",           "sector": "Energy", "weight": 0.2},
     {"ticker": "VLO",   "name": "Valero Energy",         "sector": "Energy", "weight": 0.2},
-    {"ticker": "HES",   "name": "Hess",                  "sector": "Energy", "weight": 0.2},
+    {"ticker": "TRGP",  "name": "Targa Resources",        "sector": "Energy", "weight": 0.2},
     {"ticker": "FANG",  "name": "Diamondback Energy",    "sector": "Energy", "weight": 0.2},
     {"ticker": "LNG",   "name": "Cheniere Energy",       "sector": "Energy", "weight": 0.2},
     {"ticker": "DVN",   "name": "Devon Energy",          "sector": "Energy", "weight": 0.1},
@@ -389,7 +388,7 @@ SP500: list[dict] = [
     {"ticker": "CTRA",  "name": "Coterra Energy",        "sector": "Energy", "weight": 0.1},
     {"ticker": "OVV",   "name": "Ovintiv",               "sector": "Energy", "weight": 0.05},
     {"ticker": "APA",   "name": "APA Corp",              "sector": "Energy", "weight": 0.05},
-    {"ticker": "MRO",   "name": "Marathon Oil",          "sector": "Energy", "weight": 0.05},
+    {"ticker": "PR",    "name": "Permian Resources",     "sector": "Energy", "weight": 0.05},
 
     # ── Utilities (~30 stocks) ────────────────────────────────────────────────
     {"ticker": "NEE",   "name": "NextEra Energy",        "sector": "Utilities", "weight": 0.4},
