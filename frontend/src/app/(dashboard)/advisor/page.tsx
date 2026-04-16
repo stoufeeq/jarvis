@@ -8,6 +8,13 @@ import toast from "react-hot-toast";
 
 export default function AdvisorPage() {
   const qc = useQueryClient();
+
+  // Remove extra bottom padding added for the FAB — not needed on this page
+  useEffect(() => {
+    document.body.classList.add("advisor-open");
+    return () => document.body.classList.remove("advisor-open");
+  }, []);
+
   const [activeConvId, setActiveConvId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const [selectedPortfolio, setSelectedPortfolio] = useState<number | undefined>();
