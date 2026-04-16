@@ -156,7 +156,7 @@
 /* iOS safe-area support — keeps content above home indicator */
 @supports (padding-bottom: env(safe-area-inset-bottom)) {
   .safe-bottom {
-    padding-bottom: calc(env(safe-area-inset-bottom) + 5rem);
+    padding-bottom: calc(env(safe-area-inset-bottom) + 10rem);
   }
   @media (min-width: 768px) {
     .safe-bottom {
