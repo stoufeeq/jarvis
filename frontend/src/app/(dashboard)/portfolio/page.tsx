@@ -274,7 +274,7 @@ export default function PortfolioPage() {
             onClick={() => setShowCreate(true)}
             className="px-4 py-2 rounded-md bg-secondary text-sm font-medium hover:bg-secondary/80"
           >
-            + New Portfolio
+            + Portfolio
           </button>
         </div>
       </div>
