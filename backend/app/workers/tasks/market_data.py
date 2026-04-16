@@ -61,10 +61,7 @@ async def _refresh_all_prices():
                 pos.unrealized_pnl = round((cp - avg_cost) * qty, 4)
                 pos.unrealized_pnl_pct = round((cp - avg_cost) / avg_cost * 100, 2) if avg_cost else 0
 
-        # Update watchlist item price cache
-        watchlist_tickers = list({w.ticker for w in watchlist_items})
-        pe_rsi_map = await _fetch_pe_rsi_batch(watchlist_tickers)
-
+        # Update watchlist item price cache (fast — quotes only)
         for item in watchlist_items:
             q = quote_map.get(item.ticker)
             if not q:
@@ -75,11 +72,29 @@ async def _refresh_all_prices():
             item.previous_close = _safe_price(q.get("previous_close"))
             item.fifty_two_week_high = _safe_price(q.get("fifty_two_week_high"))
             item.fifty_two_week_low = _safe_price(q.get("fifty_two_week_low"))
-            pe, rsi = pe_rsi_map.get(item.ticker, (None, None))
-            item.pe_ratio = pe
-            item.rsi14 = rsi
             item.price_updated_at = now
 
+        await db.commit()
+
+
+@celery_app.task(name="app.workers.tasks.market_data.refresh_pe_rsi", bind=True)
+def refresh_pe_rsi(self):
+    asyncio.run(_refresh_pe_rsi())
+
+
+async def _refresh_pe_rsi():
+    async with AsyncSessionLocal() as db:
+        watchlist_items = list((await db.execute(select(WatchlistItem))).scalars().all())
+        tickers = list({w.ticker for w in watchlist_items})
+        if not tickers:
+            return
+        pe_rsi_map = await _fetch_pe_rsi_batch(tickers)
+        for item in watchlist_items:
+            pe, rsi = pe_rsi_map.get(item.ticker, (None, None))
+            if pe is not None:
+                item.pe_ratio = pe
+            if rsi is not None:
+                item.rsi14 = rsi
         await db.commit()
 
 

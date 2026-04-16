@@ -37,6 +37,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.market_data.refresh_all_positions",
         "schedule": 300,  # every 5 minutes
     },
+    # Refresh P/E ratio and RSI14 for watchlist items once per hour
+    "refresh-pe-rsi": {
+        "task": "app.workers.tasks.market_data.refresh_pe_rsi",
+        "schedule": 3600,  # every hour
+    },
     # Run technical signal scan across all watchlist tickers every 15 min
     "scan-signals": {
         "task": "app.workers.tasks.signal_scan.scan_all_watchlist_tickers",
