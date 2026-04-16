@@ -1,10 +1,12 @@
 """
 Heatmap service — batch-fetches S&P 500 quotes and builds a sector tree
-suitable for rendering as a Recharts Treemap on the frontend.
+suitable for rendering as a Recharts Treemap (heatmap) or ScatterChart
+(bubbles) on the frontend.
 
-Results are cached in-process for CACHE_TTL seconds to avoid hammering
-Yahoo Finance on every page load. The cache is shared across all requests
-within the same API worker process.
+Uses period="1mo" so we have enough rows to compute a 20-day average volume
+for the relative-volume axis on the bubbles view.
+
+Results are cached in-process for CACHE_TTL seconds.
 """
 
 import asyncio
@@ -14,7 +16,7 @@ from typing import Any
 
 from app.data.sp500 import SP500
 
-CACHE_TTL = 120  # seconds — cached result served for 2 minutes
+CACHE_TTL = 120  # seconds
 
 _cache: dict[str, Any] = {}
 
@@ -38,25 +40,28 @@ def _fetch_heatmap_sync() -> dict:
     tickers = [s["ticker"] for s in SP500]
 
     change_map: dict[str, float | None] = {}
+    vol_map: dict[str, float | None] = {}
+
     try:
         df = yf.download(
             tickers,
-            period="2d",
+            period="1mo",
             interval="1d",
             auto_adjust=True,
             progress=False,
             threads=True,
         )
-        closes = df["Close"] if "Close" in df.columns else df.get("close")
+
+        closes  = df.get("Close")
+        volumes = df.get("Volume")
+
         if closes is None:
             raise ValueError("No Close column in download result")
 
         for ticker in tickers:
+            # ── change % ──────────────────────────────────────────────────────
             try:
-                if len(tickers) == 1:
-                    series = closes.dropna()
-                else:
-                    series = closes[ticker].dropna()
+                series = (closes if len(tickers) == 1 else closes[ticker]).dropna()
                 if len(series) >= 2:
                     prev = float(series.iloc[-2])
                     curr = float(series.iloc[-1])
@@ -71,36 +76,58 @@ def _fetch_heatmap_sync() -> dict:
             except (KeyError, IndexError, TypeError, ValueError):
                 change_map[ticker] = None
 
+            # ── relative volume ───────────────────────────────────────────────
+            try:
+                if volumes is None:
+                    vol_map[ticker] = None
+                    continue
+                vseries = (volumes if len(tickers) == 1 else volumes[ticker]).dropna()
+                if len(vseries) >= 2:
+                    today_vol = float(vseries.iloc[-1])
+                    avg_vol   = float(vseries.iloc[:-1].mean())
+                    if avg_vol and math.isfinite(avg_vol) and math.isfinite(today_vol):
+                        vol_map[ticker] = round(today_vol / avg_vol, 2)
+                    else:
+                        vol_map[ticker] = None
+                else:
+                    vol_map[ticker] = None
+            except (KeyError, IndexError, TypeError, ValueError):
+                vol_map[ticker] = None
+
     except Exception as exc:
-        # Return structure with no change data rather than failing the endpoint
         return {
-            "sectors": _build_sectors(change_map),
+            "sectors": _build_sectors(change_map, vol_map),
             "cached_at": time.time(),
             "error": str(exc),
         }
 
     return {
-        "sectors": _build_sectors(change_map),
+        "sectors": _build_sectors(change_map, vol_map),
         "cached_at": time.time(),
     }
 
 
-def _build_sectors(change_map: dict[str, float | None]) -> list[dict]:
+def _build_sectors(
+    change_map: dict[str, float | None],
+    vol_map: dict[str, float | None] | None = None,
+) -> list[dict]:
+    vol_map = vol_map or {}
     sectors_dict: dict[str, list[dict]] = {}
+
     for stock in SP500:
         sector = stock["sector"]
         if sector not in sectors_dict:
             sectors_dict[sector] = []
         sectors_dict[sector].append(
             {
-                "ticker": stock["ticker"],
-                "name": stock["name"],
-                "weight": stock["weight"],
+                "ticker":     stock["ticker"],
+                "name":       stock["name"],
+                "weight":     stock["weight"],
                 "change_pct": change_map.get(stock["ticker"]),
+                "rel_volume": vol_map.get(stock["ticker"]),
             }
         )
 
-    # Preserve a consistent sector order
     sector_order = [
         "Information Technology",
         "Health Care",
