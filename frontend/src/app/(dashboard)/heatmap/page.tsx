@@ -220,7 +220,7 @@ function LoadingState() {
     <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
       <RefreshCw className="w-8 h-8 animate-spin opacity-40" />
       <div className="text-center">
-        <p className="text-sm font-medium">Fetching ~275 quotes…</p>
+        <p className="text-sm font-medium">Fetching ~450 quotes…</p>
         <p className="text-xs mt-1 opacity-60">First load takes 5–10 seconds</p>
       </div>
     </div>
