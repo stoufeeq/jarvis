@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useQueries } from "@tanstack/react-query";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, TrendingUp, TrendingDown } from "lucide-react";
 import { portfolioApi, signalsApi, accountsApi, marketApi } from "@/lib/api";
 import { formatCurrency, formatPct, pnlColor, currencyLabel } from "@/lib/utils";
 import { useCurrencyDisplay } from "@/hooks/useCurrencyDisplay";
@@ -10,6 +10,8 @@ import { CurrencySwitcher } from "@/components/ui/CurrencySwitcher";
 import { PrivacyToggle } from "@/components/ui/PrivacyToggle";
 import { usePrivacyStore } from "@/store/privacy";
 import type { Portfolio, Signal, LiquidityResponse } from "@/types";
+
+const TOP_N = 7;
 
 const MASK = "••••••";
 
@@ -24,6 +26,12 @@ export default function DashboardPage() {
     queryKey: ["signals", "recent"],
     queryFn: () => signalsApi.list({ limit: 10 }).then((r) => r.data),
     staleTime: 60_000,
+  });
+
+  const { data: heatmapData } = useQuery({
+    queryKey: ["heatmap"],
+    queryFn: () => marketApi.heatmap().then((r) => r.data),
+    staleTime: 120_000,
   });
 
   const { data: liquidity } = useQuery<LiquidityResponse>({
@@ -73,6 +81,15 @@ export default function DashboardPage() {
 
   const mv = (val: string) => (isPrivate ? MASK : val);
 
+  // Flatten all stocks from heatmap sectors, filter out nulls, sort by change
+  const allStocks: { ticker: string; name: string; change_pct: number }[] =
+    (heatmapData?.sectors ?? [])
+      .flatMap((sec: { children: { ticker: string; name: string; change_pct: number | null }[] }) => sec.children)
+      .filter((s: { change_pct: number | null }) => s.change_pct != null);
+
+  const topGainers = [...allStocks].sort((a, b) => b.change_pct - a.change_pct).slice(0, TOP_N);
+  const topLosers  = [...allStocks].sort((a, b) => a.change_pct - b.change_pct).slice(0, TOP_N);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -115,6 +132,60 @@ export default function DashboardPage() {
         />
         <StatCard label="Portfolios" value={String(portfolios.length)} />
       </div>
+
+      {/* Top Movers */}
+      {allStocks.length > 0 && (
+        <section>
+          <h2 className="text-lg font-semibold mb-3">Top Movers <span className="text-xs font-normal text-muted-foreground ml-1">S&amp;P 500 · today</span></h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Gainers */}
+            <div className="rounded-xl border border-border bg-card overflow-hidden">
+              <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-emerald-500/5">
+                <TrendingUp className="w-4 h-4 text-emerald-500" />
+                <span className="text-sm font-medium text-emerald-500">Top Gainers</span>
+              </div>
+              <div className="divide-y divide-border">
+                {topGainers.map((s) => (
+                  <div key={s.ticker} className="flex items-center justify-between px-3 py-2 hover:bg-secondary/30 transition-colors">
+                    <div className="min-w-0">
+                      <span className="font-semibold text-sm">{s.ticker}</span>
+                      <span className="text-xs text-muted-foreground ml-2 truncate hidden sm:inline">{s.name}</span>
+                    </div>
+                    <span className="text-sm font-semibold text-emerald-500 shrink-0 ml-2">
+                      +{s.change_pct.toFixed(2)}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {/* Losers */}
+            <div className="rounded-xl border border-border bg-card overflow-hidden">
+              <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-red-500/5">
+                <TrendingDown className="w-4 h-4 text-red-500" />
+                <span className="text-sm font-medium text-red-500">Top Losers</span>
+              </div>
+              <div className="divide-y divide-border">
+                {topLosers.map((s) => (
+                  <div key={s.ticker} className="flex items-center justify-between px-3 py-2 hover:bg-secondary/30 transition-colors">
+                    <div className="min-w-0">
+                      <span className="font-semibold text-sm">{s.ticker}</span>
+                      <span className="text-xs text-muted-foreground ml-2 truncate hidden sm:inline">{s.name}</span>
+                    </div>
+                    <span className="text-sm font-semibold text-red-500 shrink-0 ml-2">
+                      {s.change_pct.toFixed(2)}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          {heatmapData?.cached_at && (
+            <p className="text-xs text-muted-foreground/50 mt-1.5 text-right">
+              Data as of {new Date(heatmapData.cached_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </p>
+          )}
+        </section>
+      )}
 
       {/* Recent signals */}
       <section>
