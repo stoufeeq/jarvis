@@ -163,8 +163,8 @@
       padding-bottom: 1.5rem;
     }
   }
-  /* Advisor page manages its own layout — no FAB, no extra padding needed */
+  /* Advisor page: clear bottom nav only, no FAB clearance needed */
   body.advisor-open .safe-bottom {
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-bottom: calc(env(safe-area-inset-bottom) + 3.75rem);
   }
 }
