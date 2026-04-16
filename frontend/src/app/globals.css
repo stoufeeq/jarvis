@@ -169,7 +169,7 @@
   }
   @media (min-width: 768px) {
     body.advisor-open .safe-bottom {
-      padding-bottom: 1.5rem;
+      padding-bottom: 0;
     }
   }
 }
