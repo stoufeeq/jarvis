@@ -21,28 +21,35 @@ log = logging.getLogger(__name__)
 class SignalEngine:
     def __init__(self, db: AsyncSession):
         self.db = db
-        self._providers = [
+        self._base_providers = [
             TechnicalSignalProvider(),
             InsiderSignalProvider(db),
-            AINewsSignalProvider(db),
             OptionsFlowSignalProvider(),
             FundamentalSignalProvider(),
             EarningsSignalProvider(),
             EconomicCalendarProvider(),
+        ]
+        self._ai_providers = [
+            AINewsSignalProvider(db),
             CrossImpactSignalProvider(db),
         ]
 
-    async def scan_ticker(self, ticker: str) -> list[Signal]:
-        """Run all signal providers for a ticker.
+    async def scan_ticker(self, ticker: str, include_ai: bool = False) -> list[Signal]:
+        """Run signal providers for a ticker.
+
+        include_ai=False (default): runs technical, insider, options, fundamental,
+            earnings, macro — no Gemini calls.
+        include_ai=True: also runs AINews and CrossImpact (each makes a Gemini call).
 
         Existing signals for this ticker are deleted first so the result
         always reflects the latest scan rather than accumulating stale rows.
         """
-        # Delete all previous signals for this ticker before writing fresh ones
         await self.db.execute(delete(Signal).where(Signal.ticker == ticker))
 
+        providers = self._base_providers + (self._ai_providers if include_ai else [])
+
         all_signals: list[Signal] = []
-        for provider in self._providers:
+        for provider in providers:
             try:
                 signals = await provider.scan(ticker)
                 for s in signals:

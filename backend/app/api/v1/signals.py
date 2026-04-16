@@ -30,12 +30,14 @@ async def get_signals(
 @router.post("/scan/{ticker}", response_model=list[SignalRead])
 async def scan_ticker(
     ticker: str,
+    include_ai: bool = Query(False, description="Also run AI News and Cross-Impact providers (uses Gemini)"),
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Run the full signal scan for a single ticker on demand."""
+    """Run signal scan for a ticker. Set include_ai=true to also run Gemini-powered providers."""
     engine = SignalEngine(db)
-    signals = await engine.scan_ticker(ticker.upper())
+    signals = await engine.scan_ticker(ticker.upper(), include_ai=include_ai)
+    await db.commit()
     return signals
 
 

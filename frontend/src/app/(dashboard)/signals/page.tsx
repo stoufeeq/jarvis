@@ -71,6 +71,7 @@ function SignalsTab() {
   const [direction, setDirection] = useState<string>("");
   const [type, setType] = useState<string>("");
   const [scanTicker, setScanTicker] = useState("");
+  const [includeAi, setIncludeAi] = useState(false);
 
   const { data: signals = [], isLoading, refetch } = useQuery<Signal[]>({
     queryKey: ["signals", ticker, direction, type],
@@ -86,7 +87,7 @@ function SignalsTab() {
   });
 
   const scanMutation = useMutation({
-    mutationFn: (t: string) => signalsApi.scan(t.toUpperCase()),
+    mutationFn: (t: string) => signalsApi.scan(t.toUpperCase(), includeAi),
     onSuccess: (res) => {
       const count = res.data.length;
       toast.success(
@@ -102,26 +103,48 @@ function SignalsTab() {
   return (
     <div className="space-y-6">
       {/* On-demand scan */}
-      <div className="flex gap-2 items-center rounded-xl border border-border bg-card p-4">
-        <input
-          value={scanTicker}
-          onChange={(e) => setScanTicker(e.target.value.toUpperCase())}
-          placeholder="Ticker e.g. AAPL"
-          className="px-3 py-2 rounded-md border border-border bg-input text-sm w-36 focus:outline-none focus:ring-2 focus:ring-ring"
-          onKeyDown={(e) =>
-            e.key === "Enter" && scanTicker && scanMutation.mutate(scanTicker)
-          }
-        />
-        <button
-          onClick={() => scanMutation.mutate(scanTicker)}
-          disabled={!scanTicker || scanMutation.isPending}
-          className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50"
-        >
-          {scanMutation.isPending ? "Scanning…" : "Scan Now"}
-        </button>
-        <span className="text-xs text-muted-foreground">
-          Runs all signal providers (technical, insider, news, options) for a ticker
-        </span>
+      <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+        <div className="flex gap-2 items-center flex-wrap">
+          <input
+            value={scanTicker}
+            onChange={(e) => setScanTicker(e.target.value.toUpperCase())}
+            placeholder="Ticker e.g. AAPL"
+            className="px-3 py-2 rounded-md border border-border bg-input text-sm w-36 focus:outline-none focus:ring-2 focus:ring-ring"
+            onKeyDown={(e) =>
+              e.key === "Enter" && scanTicker && scanMutation.mutate(scanTicker)
+            }
+          />
+          <button
+            onClick={() => scanMutation.mutate(scanTicker)}
+            disabled={!scanTicker || scanMutation.isPending}
+            className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50"
+          >
+            {scanMutation.isPending ? "Scanning…" : "Scan Now"}
+          </button>
+        </div>
+        {/* AI toggle */}
+        <label className="flex items-center gap-2.5 cursor-pointer w-fit">
+          <button
+            role="switch"
+            aria-checked={includeAi}
+            onClick={() => setIncludeAi((v) => !v)}
+            className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+              includeAi ? "bg-indigo-500" : "bg-muted"
+            }`}
+          >
+            <span
+              className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                includeAi ? "translate-x-4" : "translate-x-0"
+              }`}
+            />
+          </button>
+          <span className="text-sm text-muted-foreground">
+            Include AI analysis
+            <span className={`ml-1.5 text-xs ${includeAi ? "text-indigo-400" : "text-muted-foreground/50"}`}>
+              {includeAi ? "(AI News + Cross-Impact — uses Gemini)" : "(off — no Gemini calls)"}
+            </span>
+          </span>
+        </label>
       </div>
 
       {/* Filters */}

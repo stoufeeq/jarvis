@@ -107,7 +107,8 @@ export const marketApi = {
 
 export const signalsApi = {
   list: (params?: object) => api.get("/signals/", { params }),
-  scan: (ticker: string) => api.post(`/signals/scan/${ticker}`),
+  scan: (ticker: string, includeAi = false) =>
+    api.post(`/signals/scan/${ticker}`, null, { params: { include_ai: includeAi } }),
   insider: (params?: object) => api.get("/signals/insider", { params }),
 };
 
