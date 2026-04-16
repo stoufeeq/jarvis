@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     news_api_key: str = ""
     unusual_whales_api_key: str = ""
     quiver_quant_api_key: str = ""
+    finnhub_api_key: str = ""
 
     # Email (SMTP)
     sendgrid_api_key: str = ""          # kept for backwards compat, unused

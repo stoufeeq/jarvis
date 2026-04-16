@@ -75,6 +75,92 @@ async def get_heatmap(_: User = Depends(get_current_user)):
     return await HeatmapService().get_sp500_heatmap()
 
 
+@router.get("/earnings")
+async def get_earnings_calendar(
+    ticker: str = Query(None, description="Filter to a specific ticker (optional)"),
+    days: int = Query(7, ge=1, le=30),
+    _: User = Depends(get_current_user),
+):
+    """Upcoming earnings within the next N days. Powered by Finnhub."""
+    from datetime import UTC, datetime, timedelta
+
+    import httpx
+    from fastapi import HTTPException
+
+    from app.config import get_settings
+    settings = get_settings()
+    if not settings.finnhub_api_key:
+        raise HTTPException(status_code=503, detail="Finnhub API key not configured")
+
+    today = datetime.now(UTC).date()
+    to_date = today + timedelta(days=days)
+    params: dict = {
+        "from": today.isoformat(),
+        "to": to_date.isoformat(),
+        "token": settings.finnhub_api_key,
+    }
+    if ticker:
+        params["symbol"] = ticker.upper()
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get("https://finnhub.io/api/v1/calendar/earnings", params=params)
+            resp.raise_for_status()
+            return resp.json().get("earningsCalendar", [])
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Finnhub error: {exc}")
+
+
+@router.get("/economic-calendar")
+async def get_economic_calendar(
+    days: int = Query(7, ge=1, le=30),
+    _: User = Depends(get_current_user),
+):
+    """Upcoming high/medium-impact economic events. Powered by Finnhub."""
+    from datetime import UTC, datetime, timedelta
+
+    import httpx
+    from fastapi import HTTPException
+
+    from app.config import get_settings
+    from app.signals.macro_events import HIGH_IMPACT_KEYWORDS, MEDIUM_IMPACT_KEYWORDS
+
+    settings = get_settings()
+    if not settings.finnhub_api_key:
+        raise HTTPException(status_code=503, detail="Finnhub API key not configured")
+
+    today = datetime.now(UTC).date()
+    to_date = today + timedelta(days=days)
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                "https://finnhub.io/api/v1/calendar/economic",
+                params={"token": settings.finnhub_api_key},
+            )
+            resp.raise_for_status()
+            all_events = resp.json().get("economicCalendar", [])
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Finnhub error: {exc}")
+
+    results = []
+    for e in all_events:
+        date_str = (e.get("time") or "")[:10]
+        try:
+            event_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if not (today <= event_date <= to_date):
+            continue
+        name = (e.get("event") or "").lower()
+        impact = (e.get("impact") or "").lower()
+        if impact == "low" and not any(k in name for k in HIGH_IMPACT_KEYWORDS | MEDIUM_IMPACT_KEYWORDS):
+            continue
+        results.append(e)
+
+    return results
+
+
 @router.get("/options/{ticker}")
 async def get_options_flow(ticker: str, _: User = Depends(get_current_user)):
     """Options flow summary: P/C ratio, net premium, unusual contracts.

@@ -155,3 +155,11 @@ export const watchlistApi = {
   removeItem: (id: number, ticker: string) =>
     api.delete(`/watchlists/${id}/items/${ticker}`),
 };
+
+export const briefingApi = {
+  today: () => api.get("/briefing/today"),
+  regenerate: () => api.post("/briefing/regenerate"),
+  history: (limit = 30) => api.get("/briefing/history", { params: { limit } }),
+  get: (id: number) => api.get(`/briefing/${id}`),
+  delete: (id: number) => api.delete(`/briefing/${id}`),
+};

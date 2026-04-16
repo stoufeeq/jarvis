@@ -3,13 +3,14 @@
 import { useState } from "react";
 import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Plus, Check } from "lucide-react";
-import { portfolioApi, signalsApi, accountsApi, marketApi, watchlistApi } from "@/lib/api";
+import { portfolioApi, signalsApi, accountsApi, marketApi, watchlistApi, briefingApi } from "@/lib/api";
 import { formatCurrency, formatPct, pnlColor, currencyLabel } from "@/lib/utils";
 import { useCurrencyDisplay } from "@/hooks/useCurrencyDisplay";
 import { CurrencySwitcher } from "@/components/ui/CurrencySwitcher";
 import { PrivacyToggle } from "@/components/ui/PrivacyToggle";
 import { usePrivacyStore } from "@/store/privacy";
-import type { Portfolio, Signal, LiquidityResponse } from "@/types";
+import type { Portfolio, Signal, LiquidityResponse, Briefing } from "@/types";
+import Link from "next/link";
 
 const PAGE_SIZE = 7;
 const MAX_MOVERS = 49;
@@ -39,6 +40,13 @@ export default function DashboardPage() {
     queryKey: ["liquidity"],
     queryFn: () => accountsApi.liquidity().then((r) => r.data),
     staleTime: 60_000,
+  });
+
+  const { data: briefing } = useQuery<Briefing>({
+    queryKey: ["briefing", "today"],
+    queryFn: () => briefingApi.today().then((r) => r.data),
+    staleTime: 1000 * 60 * 5,
+    retry: false,
   });
 
   const dashboardBase = "USD";
@@ -134,6 +142,9 @@ export default function DashboardPage() {
         <StatCard label="Portfolios" value={String(portfolios.length)} />
       </div>
 
+      {/* Daily Briefing card */}
+      {briefing && <BriefingCard briefing={briefing} />}
+
       {/* Top Movers */}
       {allStocks.length > 0 && (
         <TopMovers
@@ -158,6 +169,48 @@ export default function DashboardPage() {
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+const SENTIMENT_PILL: Record<string, { bg: string; text: string; label: string }> = {
+  bullish:  { bg: "bg-emerald-500/15", text: "text-emerald-400", label: "Bullish" },
+  neutral:  { bg: "bg-slate-500/15",   text: "text-slate-400",   label: "Neutral" },
+  cautious: { bg: "bg-amber-500/15",   text: "text-amber-400",   label: "Cautious" },
+  bearish:  { bg: "bg-red-500/15",     text: "text-red-400",     label: "Bearish" },
+};
+
+function BriefingCard({ briefing }: { briefing: Briefing }) {
+  const pill = SENTIMENT_PILL[briefing.overall_sentiment] ?? SENTIMENT_PILL.neutral;
+  const bullets = briefing.summary
+    ? briefing.summary.split("\n").filter(Boolean)
+    : briefing.content?.summary_bullets?.map((b) => `• ${b}`) ?? [];
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-foreground">Daily Briefing</h2>
+          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${pill.bg} ${pill.text}`}>
+            {pill.label}
+          </span>
+        </div>
+        <Link
+          href="/briefing"
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          Read full briefing →
+        </Link>
+      </div>
+      {bullets.length > 0 ? (
+        <ul className="space-y-1.5">
+          {bullets.map((b, i) => (
+            <li key={i} className="text-sm text-muted-foreground">{b}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-sm text-muted-foreground">Briefing generated. Click to read.</p>
+      )}
     </div>
   );
 }
@@ -207,7 +260,7 @@ function SignalRow({ signal }: { signal: Signal }) {
             <span className="text-xs text-muted-foreground">
               {"★".repeat(signal.strength)}{"☆".repeat(5 - signal.strength)}
             </span>
-            <span className="text-xs text-muted-foreground">{signal.signal_type.replace("_", " ")}</span>
+            <span className="text-xs text-muted-foreground">{signal.signal_type.replace(/_/g, " ")}</span>
             {signal.timeframe && (
               <span className="text-xs text-muted-foreground">{signal.timeframe}</span>
             )}

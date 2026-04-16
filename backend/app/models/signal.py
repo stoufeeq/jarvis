@@ -14,6 +14,9 @@ class SignalType(str, enum.Enum):
     ai_news = "ai_news"
     options_flow = "options_flow"
     fundamental = "fundamental"
+    earnings_upcoming = "earnings_upcoming"
+    macro_event = "macro_event"
+    cross_impact = "cross_impact"
 
 
 class SignalDirection(str, enum.Enum):

@@ -7,8 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.insider_trade import InsiderTrade
 from app.models.signal import Signal, SignalDirection, SignalType
 from app.signals.ai_news import AINewsSignalProvider
+from app.signals.cross_impact import CrossImpactSignalProvider
+from app.signals.earnings import EarningsSignalProvider
 from app.signals.fundamental import FundamentalSignalProvider
 from app.signals.insider import InsiderSignalProvider
+from app.signals.macro_events import EconomicCalendarProvider
 from app.signals.options_flow import OptionsFlowSignalProvider
 from app.signals.technical import TechnicalSignalProvider
 
@@ -24,6 +27,9 @@ class SignalEngine:
             AINewsSignalProvider(db),
             OptionsFlowSignalProvider(),
             FundamentalSignalProvider(),
+            EarningsSignalProvider(),
+            EconomicCalendarProvider(),
+            CrossImpactSignalProvider(db),
         ]
 
     async def scan_ticker(self, ticker: str) -> list[Signal]:

@@ -14,6 +14,7 @@ celery_app = Celery(
         "app.workers.tasks.signal_scan",
         "app.workers.tasks.news_digest",
         "app.workers.tasks.insider_fetch",
+        "app.workers.tasks.eightk_fetch",
     ],
 )
 
@@ -51,6 +52,11 @@ celery_app.conf.beat_schedule = {
     "fetch-insider-trades": {
         "task": "app.workers.tasks.insider_fetch.fetch_all_insider_trades",
         "schedule": crontab(hour=6, minute=0),
+    },
+    # Fetch SEC 8-K material event filings once daily at 8am UTC
+    "fetch-8k-filings": {
+        "task": "app.workers.tasks.eightk_fetch.fetch_all_8k_filings",
+        "schedule": crontab(hour=8, minute=0),
     },
     # Fetch news + score sentiment twice daily
     "news-digest-morning": {

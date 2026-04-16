@@ -218,3 +218,54 @@ export interface InsiderTrade {
   total_value: number | null;
   filed_at: string;
 }
+
+// ── Briefing ──────────────────────────────────────────────────────────────────
+
+export interface BriefingPortfolioItem {
+  ticker: string;
+  action: "hold" | "trim" | "add" | "watch" | "exit";
+  verdict: string;
+  reasoning: string;
+}
+
+export interface BriefingWatchlistItem {
+  ticker: string;
+  action: "buy" | "watch" | "avoid";
+  verdict: string;
+  reasoning: string;
+  catalyst: string;
+}
+
+export interface BriefingSP500Item {
+  ticker: string;
+  action: "buy" | "watch" | "avoid";
+  verdict: string;
+  reasoning: string;
+  catalyst: string;
+}
+
+export interface BriefingMacroEvent {
+  event: string;
+  date: string;
+  impact: string;
+}
+
+export interface BriefingContent {
+  overall_sentiment: "bullish" | "neutral" | "cautious" | "bearish";
+  market_context: string;
+  macro_events: BriefingMacroEvent[];
+  portfolio: BriefingPortfolioItem[];
+  watchlist_opportunities: BriefingWatchlistItem[];
+  sp500_opportunities: BriefingSP500Item[];
+  summary_bullets: string[];
+}
+
+export interface Briefing {
+  id: number;
+  briefing_date: string;
+  overall_sentiment: string;
+  summary: string | null;
+  content_json: string | null;
+  content: BriefingContent | null;
+  generated_at: string;
+}

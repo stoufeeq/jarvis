@@ -13,12 +13,14 @@ import {
   LogOut,
   Wallet,
   LayoutGrid,
+  Newspaper,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth";
 
 const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/briefing", label: "Briefing", icon: Newspaper },
   { href: "/portfolio", label: "Portfolio", icon: Briefcase },
   { href: "/accounts", label: "Accounts", icon: Wallet },
   { href: "/watchlist", label: "Watchlist", icon: BookOpen },

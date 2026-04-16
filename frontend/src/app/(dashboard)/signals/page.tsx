@@ -7,8 +7,30 @@ import { formatCurrency } from "@/lib/utils";
 import type { Signal, OptionsFlowSummary, UnusualContract, UWFlowItem } from "@/types";
 import toast from "react-hot-toast";
 
+const SIGNAL_TYPE_LABEL: Record<string, string> = {
+  technical:         "Technical",
+  insider:           "Insider",
+  ai_news:           "AI News",
+  options_flow:      "Options Flow",
+  fundamental:       "Fundamental",
+  earnings_upcoming: "Earnings",
+  macro_event:       "Macro Event",
+  cross_impact:      "Cross-Impact",
+};
+
+const SIGNAL_TYPE_STYLE: Record<string, string> = {
+  technical:         "bg-blue-500/10 text-blue-400",
+  insider:           "bg-purple-500/10 text-purple-400",
+  ai_news:           "bg-sky-500/10 text-sky-400",
+  options_flow:      "bg-orange-500/10 text-orange-400",
+  fundamental:       "bg-teal-500/10 text-teal-400",
+  earnings_upcoming: "bg-yellow-500/10 text-yellow-400",
+  macro_event:       "bg-pink-500/10 text-pink-400",
+  cross_impact:      "bg-indigo-500/10 text-indigo-400",
+};
+
 const DIRECTIONS = ["", "bullish", "bearish", "neutral"] as const;
-const TYPES = ["", "technical", "insider", "ai_news", "options_flow", "fundamental"] as const;
+const TYPES = ["", "technical", "insider", "ai_news", "options_flow", "fundamental", "earnings_upcoming", "macro_event", "cross_impact"] as const;
 const TABS = ["signals", "options_flow"] as const;
 type Tab = (typeof TABS)[number];
 
@@ -170,8 +192,8 @@ function SignalCard({ signal }: { signal: Signal }) {
         >
           {signal.direction}
         </span>
-        <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
-          {signal.signal_type.replace("_", " ")}
+        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${SIGNAL_TYPE_STYLE[signal.signal_type] ?? "bg-secondary text-muted-foreground"}`}>
+          {SIGNAL_TYPE_LABEL[signal.signal_type] ?? signal.signal_type.replace(/_/g, " ")}
         </span>
         {signal.timeframe && (
           <span className="text-xs text-muted-foreground">{signal.timeframe}</span>
