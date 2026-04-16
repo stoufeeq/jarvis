@@ -3,10 +3,10 @@ set -e
 
 case "${COMMAND:-api}" in
   worker)
-    exec celery -A app.workers.celery_app worker --loglevel=info --concurrency=2 -Q celery,market_data,signals,default
+    exec celery -A app.workers.celery_app worker --loglevel=info --pool=solo -Q celery,market_data,signals,default
     ;;
   beat)
-    exec celery -A app.workers.celery_app beat --loglevel=warning
+    exec celery -A app.workers.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
     ;;
   *)
     echo "Running Alembic migrations..."
