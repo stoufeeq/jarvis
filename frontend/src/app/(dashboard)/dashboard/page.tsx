@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useQueries } from "@tanstack/react-query";
-import { ChevronDown, TrendingUp, TrendingDown, ChevronLeft, ChevronRight } from "lucide-react";
-import { portfolioApi, signalsApi, accountsApi, marketApi } from "@/lib/api";
+import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Plus, Check } from "lucide-react";
+import { portfolioApi, signalsApi, accountsApi, marketApi, watchlistApi } from "@/lib/api";
 import { formatCurrency, formatPct, pnlColor, currencyLabel } from "@/lib/utils";
 import { useCurrencyDisplay } from "@/hooks/useCurrencyDisplay";
 import { CurrencySwitcher } from "@/components/ui/CurrencySwitcher";
@@ -240,6 +240,45 @@ function SignalRow({ signal }: { signal: Signal }) {
 
 type MoverStock = { ticker: string; name: string; change_pct: number };
 
+function MoverRow({
+  rank, stock, inWatchlist, onAdd, adding, color,
+}: {
+  rank: number;
+  stock: MoverStock;
+  inWatchlist: boolean;
+  onAdd: () => void;
+  adding: boolean;
+  color: "emerald" | "red";
+}) {
+  const pctClass = color === "emerald" ? "text-emerald-500" : "text-red-500";
+  const pctLabel = color === "emerald"
+    ? `+${stock.change_pct.toFixed(2)}%`
+    : `${stock.change_pct.toFixed(2)}%`;
+
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 hover:bg-secondary/30 transition-colors">
+      <span className="text-xs text-muted-foreground/50 w-5 shrink-0 text-right">{rank}</span>
+      <div className="flex-1 min-w-0">
+        <span className="font-semibold text-sm">{stock.ticker}</span>
+        <span className="text-xs text-muted-foreground ml-2 truncate hidden sm:inline">{stock.name}</span>
+      </div>
+      <span className={`text-sm font-semibold shrink-0 ${pctClass}`}>{pctLabel}</span>
+      <button
+        onClick={onAdd}
+        disabled={inWatchlist || adding}
+        title={inWatchlist ? "Already in watchlist" : "Add to watchlist"}
+        className={`shrink-0 w-6 h-6 flex items-center justify-center rounded-md transition-colors
+          ${inWatchlist
+            ? "text-emerald-500 cursor-default"
+            : "text-muted-foreground hover:text-foreground hover:bg-secondary disabled:opacity-40"
+          }`}
+      >
+        {inWatchlist ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+      </button>
+    </div>
+  );
+}
+
 function TopMovers({
   gainers,
   losers,
@@ -250,6 +289,21 @@ function TopMovers({
   cachedAt?: number;
 }) {
   const [page, setPage] = useState(0);
+  const qc = useQueryClient();
+
+  const { data: watchlists = [] } = useQuery({
+    queryKey: ["watchlists"],
+    queryFn: () => watchlistApi.list().then((r) => r.data),
+    staleTime: 60_000,
+  });
+  const watchlist = watchlists[0];
+  const watchedTickers = new Set<string>((watchlist?.items ?? []).map((i: { ticker: string }) => i.ticker));
+
+  const addMutation = useMutation({
+    mutationFn: (ticker: string) => watchlistApi.addItem(watchlist.id, ticker),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["watchlists"] }),
+  });
+
   const totalPages = Math.ceil(Math.max(gainers.length, losers.length) / PAGE_SIZE);
   const start = page * PAGE_SIZE;
   const end = start + PAGE_SIZE;
@@ -295,18 +349,15 @@ function TopMovers({
           </div>
           <div className="divide-y divide-border">
             {pageGainers.map((s, i) => (
-              <div key={s.ticker} className="flex items-center justify-between px-3 py-2 hover:bg-secondary/30 transition-colors">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-xs text-muted-foreground/50 w-5 shrink-0 text-right">{start + i + 1}</span>
-                  <div className="min-w-0">
-                    <span className="font-semibold text-sm">{s.ticker}</span>
-                    <span className="text-xs text-muted-foreground ml-2 truncate hidden sm:inline">{s.name}</span>
-                  </div>
-                </div>
-                <span className="text-sm font-semibold text-emerald-500 shrink-0 ml-2">
-                  +{s.change_pct.toFixed(2)}%
-                </span>
-              </div>
+              <MoverRow
+                key={s.ticker}
+                rank={start + i + 1}
+                stock={s}
+                inWatchlist={watchedTickers.has(s.ticker)}
+                onAdd={() => addMutation.mutate(s.ticker)}
+                adding={addMutation.isPending && addMutation.variables === s.ticker}
+                color="emerald"
+              />
             ))}
           </div>
         </div>
@@ -320,18 +371,15 @@ function TopMovers({
           </div>
           <div className="divide-y divide-border">
             {pageLosers.map((s, i) => (
-              <div key={s.ticker} className="flex items-center justify-between px-3 py-2 hover:bg-secondary/30 transition-colors">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-xs text-muted-foreground/50 w-5 shrink-0 text-right">{start + i + 1}</span>
-                  <div className="min-w-0">
-                    <span className="font-semibold text-sm">{s.ticker}</span>
-                    <span className="text-xs text-muted-foreground ml-2 truncate hidden sm:inline">{s.name}</span>
-                  </div>
-                </div>
-                <span className="text-sm font-semibold text-red-500 shrink-0 ml-2">
-                  {s.change_pct.toFixed(2)}%
-                </span>
-              </div>
+              <MoverRow
+                key={s.ticker}
+                rank={start + i + 1}
+                stock={s}
+                inWatchlist={watchedTickers.has(s.ticker)}
+                onAdd={() => addMutation.mutate(s.ticker)}
+                adding={addMutation.isPending && addMutation.variables === s.ticker}
+                color="red"
+              />
             ))}
           </div>
         </div>
