@@ -12,7 +12,7 @@ import { usePrivacyStore } from "@/store/privacy";
 import type { Portfolio, Signal, LiquidityResponse } from "@/types";
 
 const PAGE_SIZE = 7;
-const MAX_MOVERS = 50;
+const MAX_MOVERS = 49;
 
 const MASK = "••••••";
 
