@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useQueries } from "@tanstack/react-query";
-import { ChevronDown, TrendingUp, TrendingDown } from "lucide-react";
+import { ChevronDown, TrendingUp, TrendingDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { portfolioApi, signalsApi, accountsApi, marketApi } from "@/lib/api";
 import { formatCurrency, formatPct, pnlColor, currencyLabel } from "@/lib/utils";
 import { useCurrencyDisplay } from "@/hooks/useCurrencyDisplay";
@@ -11,7 +11,8 @@ import { PrivacyToggle } from "@/components/ui/PrivacyToggle";
 import { usePrivacyStore } from "@/store/privacy";
 import type { Portfolio, Signal, LiquidityResponse } from "@/types";
 
-const TOP_N = 7;
+const PAGE_SIZE = 7;
+const MAX_MOVERS = 50;
 
 const MASK = "••••••";
 
@@ -87,8 +88,8 @@ export default function DashboardPage() {
       .flatMap((sec: { children: { ticker: string; name: string; change_pct: number | null }[] }) => sec.children)
       .filter((s: { change_pct: number | null }) => s.change_pct != null);
 
-  const topGainers = [...allStocks].sort((a, b) => b.change_pct - a.change_pct).slice(0, TOP_N);
-  const topLosers  = [...allStocks].sort((a, b) => a.change_pct - b.change_pct).slice(0, TOP_N);
+  const allGainers = [...allStocks].sort((a, b) => b.change_pct - a.change_pct).slice(0, MAX_MOVERS);
+  const allLosers  = [...allStocks].sort((a, b) => a.change_pct - b.change_pct).slice(0, MAX_MOVERS);
 
   return (
     <div className="space-y-6">
@@ -135,56 +136,11 @@ export default function DashboardPage() {
 
       {/* Top Movers */}
       {allStocks.length > 0 && (
-        <section>
-          <h2 className="text-lg font-semibold mb-3">Top Movers <span className="text-xs font-normal text-muted-foreground ml-1">S&amp;P 500 · today</span></h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Gainers */}
-            <div className="rounded-xl border border-border bg-card overflow-hidden">
-              <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-emerald-500/5">
-                <TrendingUp className="w-4 h-4 text-emerald-500" />
-                <span className="text-sm font-medium text-emerald-500">Top Gainers</span>
-              </div>
-              <div className="divide-y divide-border">
-                {topGainers.map((s) => (
-                  <div key={s.ticker} className="flex items-center justify-between px-3 py-2 hover:bg-secondary/30 transition-colors">
-                    <div className="min-w-0">
-                      <span className="font-semibold text-sm">{s.ticker}</span>
-                      <span className="text-xs text-muted-foreground ml-2 truncate hidden sm:inline">{s.name}</span>
-                    </div>
-                    <span className="text-sm font-semibold text-emerald-500 shrink-0 ml-2">
-                      +{s.change_pct.toFixed(2)}%
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            {/* Losers */}
-            <div className="rounded-xl border border-border bg-card overflow-hidden">
-              <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-red-500/5">
-                <TrendingDown className="w-4 h-4 text-red-500" />
-                <span className="text-sm font-medium text-red-500">Top Losers</span>
-              </div>
-              <div className="divide-y divide-border">
-                {topLosers.map((s) => (
-                  <div key={s.ticker} className="flex items-center justify-between px-3 py-2 hover:bg-secondary/30 transition-colors">
-                    <div className="min-w-0">
-                      <span className="font-semibold text-sm">{s.ticker}</span>
-                      <span className="text-xs text-muted-foreground ml-2 truncate hidden sm:inline">{s.name}</span>
-                    </div>
-                    <span className="text-sm font-semibold text-red-500 shrink-0 ml-2">
-                      {s.change_pct.toFixed(2)}%
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-          {heatmapData?.cached_at && (
-            <p className="text-xs text-muted-foreground/50 mt-1.5 text-right">
-              Data as of {new Date(heatmapData.cached_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-            </p>
-          )}
-        </section>
+        <TopMovers
+          gainers={allGainers}
+          losers={allLosers}
+          cachedAt={heatmapData?.cached_at}
+        />
       )}
 
       {/* Recent signals */}
@@ -279,5 +235,113 @@ function SignalRow({ signal }: { signal: Signal }) {
       </div>
 
     </div>
+  );
+}
+
+type MoverStock = { ticker: string; name: string; change_pct: number };
+
+function TopMovers({
+  gainers,
+  losers,
+  cachedAt,
+}: {
+  gainers: MoverStock[];
+  losers: MoverStock[];
+  cachedAt?: number;
+}) {
+  const [page, setPage] = useState(0);
+  const totalPages = Math.ceil(Math.max(gainers.length, losers.length) / PAGE_SIZE);
+  const start = page * PAGE_SIZE;
+  const end = start + PAGE_SIZE;
+  const pageGainers = gainers.slice(start, end);
+  const pageLosers  = losers.slice(start, end);
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-lg font-semibold">
+          Top Movers{" "}
+          <span className="text-xs font-normal text-muted-foreground ml-1">S&amp;P 500 · today</span>
+        </h2>
+        {/* Pagination controls */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-muted-foreground">
+            {start + 1}–{Math.min(end, Math.max(gainers.length, losers.length))} of {Math.max(gainers.length, losers.length)}
+          </span>
+          <button
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            disabled={page === 0}
+            className="p-1 rounded-md hover:bg-secondary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+            disabled={page >= totalPages - 1}
+            className="p-1 rounded-md hover:bg-secondary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* Gainers */}
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-emerald-500/5">
+            <TrendingUp className="w-4 h-4 text-emerald-500" />
+            <span className="text-sm font-medium text-emerald-500">Gainers</span>
+            <span className="text-xs text-muted-foreground ml-auto">#{start + 1}–{start + pageGainers.length}</span>
+          </div>
+          <div className="divide-y divide-border">
+            {pageGainers.map((s, i) => (
+              <div key={s.ticker} className="flex items-center justify-between px-3 py-2 hover:bg-secondary/30 transition-colors">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs text-muted-foreground/50 w-5 shrink-0 text-right">{start + i + 1}</span>
+                  <div className="min-w-0">
+                    <span className="font-semibold text-sm">{s.ticker}</span>
+                    <span className="text-xs text-muted-foreground ml-2 truncate hidden sm:inline">{s.name}</span>
+                  </div>
+                </div>
+                <span className="text-sm font-semibold text-emerald-500 shrink-0 ml-2">
+                  +{s.change_pct.toFixed(2)}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Losers */}
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-red-500/5">
+            <TrendingDown className="w-4 h-4 text-red-500" />
+            <span className="text-sm font-medium text-red-500">Losers</span>
+            <span className="text-xs text-muted-foreground ml-auto">#{start + 1}–{start + pageLosers.length}</span>
+          </div>
+          <div className="divide-y divide-border">
+            {pageLosers.map((s, i) => (
+              <div key={s.ticker} className="flex items-center justify-between px-3 py-2 hover:bg-secondary/30 transition-colors">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs text-muted-foreground/50 w-5 shrink-0 text-right">{start + i + 1}</span>
+                  <div className="min-w-0">
+                    <span className="font-semibold text-sm">{s.ticker}</span>
+                    <span className="text-xs text-muted-foreground ml-2 truncate hidden sm:inline">{s.name}</span>
+                  </div>
+                </div>
+                <span className="text-sm font-semibold text-red-500 shrink-0 ml-2">
+                  {s.change_pct.toFixed(2)}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {cachedAt && (
+        <p className="text-xs text-muted-foreground/50 mt-1.5 text-right">
+          Data as of {new Date(cachedAt * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+        </p>
+      )}
+    </section>
   );
 }
