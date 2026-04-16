@@ -232,8 +232,22 @@ function LoadingState() {
 type Tab = "heatmap" | "bubbles";
 
 export default function HeatmapPage() {
-  const [fetchKey, setFetchKey] = useState(0);
-  const [tab, setTab]           = useState<Tab>("heatmap");
+  const [fetchKey, setFetchKey]           = useState(0);
+  const [tab, setTab]                     = useState<Tab>("heatmap");
+  const [activeSectors, setActiveSectors] = useState<Set<string>>(
+    () => new Set(Object.keys(SECTOR_COLORS))
+  );
+
+  const toggleSector = useCallback((sector: string) => {
+    setActiveSectors((prev) => {
+      const next = new Set(prev);
+      if (next.has(sector)) next.delete(sector); else next.add(sector);
+      return next;
+    });
+  }, []);
+
+  const allActive  = activeSectors.size === Object.keys(SECTOR_COLORS).length;
+  const noneActive = activeSectors.size === 0;
 
   const { data, isFetching, dataUpdatedAt, error } = useQuery<HeatmapResponse>({
     queryKey: ["heatmap", fetchKey],
@@ -336,14 +350,48 @@ export default function HeatmapPage() {
       {/* ── Bubbles tab ───────────────────────────────────────────────────────── */}
       {data && tab === "bubbles" && (
         <>
-          {/* Sector legend */}
+          {/* Sector legend — click to filter */}
           <div className="flex items-center gap-2 flex-wrap">
-            {Object.entries(SECTOR_COLORS).map(([sector, color]) => (
-              <div key={sector} className="flex items-center gap-1">
-                <div className="w-2.5 h-2.5 rounded-full" style={{ background: color }} />
-                <span className="text-xs text-muted-foreground">{sector}</span>
-              </div>
-            ))}
+            {Object.entries(SECTOR_COLORS).map(([sector, color]) => {
+              const active = activeSectors.has(sector);
+              return (
+                <button
+                  key={sector}
+                  onClick={() => toggleSector(sector)}
+                  className={cn(
+                    "flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs transition-all",
+                    active
+                      ? "border-transparent text-foreground"
+                      : "border-border text-muted-foreground/40 line-through"
+                  )}
+                  style={{ background: active ? color + "22" : "transparent" }}
+                  title={active ? `Hide ${sector}` : `Show ${sector}`}
+                >
+                  <div
+                    className="w-2 h-2 rounded-full shrink-0 transition-opacity"
+                    style={{ background: color, opacity: active ? 1 : 0.3 }}
+                  />
+                  {sector}
+                </button>
+              );
+            })}
+            <div className="flex gap-1 ml-1">
+              <button
+                onClick={() => setActiveSectors(new Set(Object.keys(SECTOR_COLORS)))}
+                disabled={allActive}
+                className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30 px-1"
+              >
+                All
+              </button>
+              <span className="text-muted-foreground/30 text-xs">|</span>
+              <button
+                onClick={() => setActiveSectors(new Set())}
+                disabled={noneActive}
+                className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30 px-1"
+              >
+                None
+              </button>
+            </div>
           </div>
 
           <div className="flex-1 min-h-0 rounded-xl border border-border bg-card p-4">
@@ -375,8 +423,8 @@ export default function HeatmapPage() {
                 {/* Reference lines */}
                 <ReferenceLine x={0} stroke="#475569" strokeDasharray="4 2" />
                 <ReferenceLine y={1} stroke="#475569" strokeDasharray="4 2" label={{ value: "avg vol", position: "right", fontSize: 10, fill: "#475569" }} />
-                {/* One Scatter per sector for coloring */}
-                {Object.entries(bubblesBySector).map(([sector, points]) => (
+                {/* One Scatter per sector — filtered by activeSectors */}
+                {Object.entries(bubblesBySector).filter(([sector]) => activeSectors.has(sector)).map(([sector, points]) => (
                   <Scatter
                     key={sector}
                     name={sector}
