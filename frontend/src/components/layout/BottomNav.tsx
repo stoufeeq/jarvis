@@ -11,6 +11,7 @@ import {
   MessageSquare,
   Settings,
   Wallet,
+  LayoutGrid,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +21,7 @@ const NAV = [
   { href: "/accounts", label: "Accounts", icon: Wallet },
   { href: "/watchlist", label: "Watchlist", icon: BookOpen },
   { href: "/signals", label: "Signals", icon: TrendingUp },
+  { href: "/heatmap", label: "Heatmap", icon: LayoutGrid },
   { href: "/alerts", label: "Alerts", icon: Bell },
   { href: "/advisor", label: "Advisor", icon: MessageSquare },
   { href: "/settings", label: "Settings", icon: Settings },

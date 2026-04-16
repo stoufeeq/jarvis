@@ -68,6 +68,13 @@ async def get_fx_rate(
     return {"from": from_c, "to": to_c, "rate": rate}
 
 
+@router.get("/heatmap")
+async def get_heatmap(_: User = Depends(get_current_user)):
+    """S&P 500 sector heatmap — batch quotes cached 2 min. Trigger manually; no background polling."""
+    from app.services.heatmap import HeatmapService
+    return await HeatmapService().get_sp500_heatmap()
+
+
 @router.get("/options/{ticker}")
 async def get_options_flow(ticker: str, _: User = Depends(get_current_user)):
     """Options flow summary: P/C ratio, net premium, unusual contracts.

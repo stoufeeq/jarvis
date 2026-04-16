@@ -102,6 +102,7 @@ export const marketApi = {
   currency: (ticker: string) => api.get(`/market/currency/${ticker}`),
   fx: (from: string, to: string) => api.get("/market/fx", { params: { from, to } }),
   optionsFlow: (ticker: string) => api.get(`/market/options/${ticker}`),
+  heatmap: () => api.get("/market/heatmap"),
 };
 
 export const signalsApi = {
