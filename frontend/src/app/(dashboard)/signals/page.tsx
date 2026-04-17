@@ -187,7 +187,7 @@ function SignalsTab() {
         </div>
       )}
 
-      <div className="space-y-3">
+      <div className="space-y-3 overflow-x-hidden">
         {signals.map((s) => (
           <SignalCard key={s.id} signal={s} />
         ))}
@@ -231,7 +231,7 @@ function SignalCard({ signal }: { signal: Signal }) {
       </div>
 
       {signal.rationale && (
-        <p className="text-sm text-muted-foreground">{signal.rationale}</p>
+        <p className="text-sm text-muted-foreground break-words">{signal.rationale}</p>
       )}
 
       {signal.expires_at && (
@@ -241,9 +241,20 @@ function SignalCard({ signal }: { signal: Signal }) {
       )}
 
       {signal.indicators && (
-        <p className="text-xs font-mono text-muted-foreground/70">
-          {signal.indicators}
-        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {signal.indicators.split(",").map((ind, i) => {
+            const [key, val] = ind.trim().split(/[=:](.+)/);
+            return (
+              <span
+                key={i}
+                className="inline-flex items-center gap-1 text-[10px] font-mono bg-secondary/50 text-muted-foreground px-2 py-0.5 rounded"
+              >
+                <span className="text-muted-foreground/60">{key.trim()}</span>
+                {val && <><span className="text-muted-foreground/30">:</span><span>{val.trim()}</span></>}
+              </span>
+            );
+          })}
+        </div>
       )}
 
       {signal.entry_price && (
