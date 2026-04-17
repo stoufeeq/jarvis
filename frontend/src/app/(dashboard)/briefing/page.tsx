@@ -371,7 +371,7 @@ export default function BriefingPage() {
   const isLoading = activeBriefingId ? loadingSelected : loadingToday;
 
   return (
-    <div className="flex h-[calc(100dvh-56px)] overflow-hidden">
+    <div className="md:flex md:h-[calc(100dvh-56px)] md:overflow-hidden">
       {/* ── Desktop sidebar ─────────────────────────────────── */}
       <aside className="hidden md:flex flex-col w-52 shrink-0 border-r border-white/10 bg-[#0f1117]">
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
@@ -406,7 +406,7 @@ export default function BriefingPage() {
       </aside>
 
       {/* ── Main content ─────────────────────────────────────── */}
-      <main className="flex-1 flex flex-col overflow-hidden">
+      <main className="md:flex-1 md:flex md:flex-col md:overflow-hidden">
         {/* Toolbar */}
         <div className="flex items-center justify-between px-4 md:px-6 py-3 border-b border-white/10 shrink-0">
           <div className="flex items-center gap-2">
@@ -456,7 +456,7 @@ export default function BriefingPage() {
         )}
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto px-4 md:px-6 py-4">
+        <div className="md:flex-1 md:overflow-y-auto px-4 md:px-6 py-4">
           {isLoading ? (
             <div className="flex flex-col items-center justify-center h-64 gap-3">
               <RefreshCw className="w-6 h-6 text-indigo-400 animate-spin" />
