@@ -301,6 +301,9 @@ function HistoryItem({
       <div className="min-w-0">
         <p className="text-xs font-medium text-white truncate">
           {format(new Date(briefing.briefing_date + "T00:00:00"), "MMM d, yyyy")}
+          <span className="text-white/40 ml-1">
+            {format(new Date(briefing.generated_at), "HH:mm")}
+          </span>
         </p>
         <span className={`text-[10px] font-semibold ${style.text}`}>{style.label}</span>
       </div>

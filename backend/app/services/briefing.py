@@ -52,7 +52,7 @@ import json
 import logging
 from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -77,29 +77,23 @@ class BriefingService:
     # ── Public API ────────────────────────────────────────────────────────────
 
     async def get_or_create_today(self, user: User) -> DailyBriefing:
-        """Return today's briefing, generating it if it doesn't exist yet."""
+        """Return the most recent briefing for today, generating one if none exists yet."""
         today = datetime.now(UTC).date()
-        existing = await self._get_by_date(user.id, today)
+        existing = await self._get_latest_by_date(user.id, today)
         if existing:
             return existing
         return await self._generate(user, today)
 
     async def regenerate_today(self, user: User) -> DailyBriefing:
-        """Force-regenerate today's briefing, replacing any existing one."""
+        """Generate a new briefing for today, keeping all previous ones in history."""
         today = datetime.now(UTC).date()
-        await self.db.execute(
-            delete(DailyBriefing).where(
-                DailyBriefing.user_id == user.id,
-                DailyBriefing.briefing_date == today,
-            )
-        )
         return await self._generate(user, today)
 
     async def get_history(self, user_id: int, limit: int = 30) -> list[DailyBriefing]:
         result = await self.db.execute(
             select(DailyBriefing)
             .where(DailyBriefing.user_id == user_id)
-            .order_by(DailyBriefing.briefing_date.desc())
+            .order_by(DailyBriefing.generated_at.desc())
             .limit(limit)
         )
         return list(result.scalars().all())
@@ -128,12 +122,15 @@ class BriefingService:
 
     # ── Internal generation ───────────────────────────────────────────────────
 
-    async def _get_by_date(self, user_id: int, d: date) -> DailyBriefing | None:
+    async def _get_latest_by_date(self, user_id: int, d: date) -> DailyBriefing | None:
         result = await self.db.execute(
-            select(DailyBriefing).where(
+            select(DailyBriefing)
+            .where(
                 DailyBriefing.user_id == user_id,
                 DailyBriefing.briefing_date == d,
             )
+            .order_by(DailyBriefing.generated_at.desc())
+            .limit(1)
         )
         return result.scalar_one_or_none()
 
