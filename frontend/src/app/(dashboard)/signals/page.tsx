@@ -242,7 +242,7 @@ function SignalCard({ signal }: { signal: Signal }) {
 
       {signal.indicators && (
         <div className="flex flex-wrap gap-1.5">
-          {signal.indicators.split(",").map((ind, i) => {
+          {signal.indicators.split(/,(?=[A-Za-z_])/).map((ind, i) => {
             const [key, val] = ind.trim().split(/[=:](.+)/);
             return (
               <span
