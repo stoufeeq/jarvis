@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import {
   Treemap,
   ScatterChart,
@@ -13,10 +13,11 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Briefcase, BookOpen, Globe } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { marketApi } from "@/lib/api";
+import { marketApi, portfolioApi, watchlistApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import type { Portfolio, Position, WatchlistItem } from "@/types";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -37,6 +38,12 @@ interface HeatmapResponse {
   sectors: HeatmapSector[];
   cached_at: number | null;
   error?: string;
+}
+
+interface WatchlistWithItems {
+  id: number;
+  name: string;
+  items: WatchlistItem[];
 }
 
 interface TreeNode {
@@ -158,28 +165,42 @@ function HeatmapCell(props: any) {
   return null;
 }
 
-function toTreeData(response: HeatmapResponse): TreeNode[] {
-  return response.sectors.map((sector) => ({
-    name: sector.name,
-    children: sector.children.map((s) => ({
-      name:       s.ticker,
-      ticker:     s.ticker,
-      company:    s.name,
-      size:       s.weight,
-      change_pct: s.change_pct,
-    })),
-  }));
+function toTreeData(
+  response: HeatmapResponse,
+  activeSectors: Set<string>,
+  tickerFilter: Set<string> | null
+): TreeNode[] {
+  return response.sectors
+    .filter((sector) => activeSectors.has(sector.name))
+    .map((sector) => ({
+      name: sector.name,
+      children: sector.children
+        .filter((s) => tickerFilter == null || tickerFilter.has(s.ticker))
+        .map((s) => ({
+          name:       s.ticker,
+          ticker:     s.ticker,
+          company:    s.name,
+          size:       s.weight,
+          change_pct: s.change_pct,
+        })),
+    }))
+    .filter((sector) => sector.children.length > 0);
 }
 
 // ── Bubbles helpers ───────────────────────────────────────────────────────────
 
-function toBubblesBySector(response: HeatmapResponse): Record<string, BubblePoint[]> {
+function toBubblesBySector(
+  response: HeatmapResponse,
+  activeSectors: Set<string>,
+  tickerFilter: Set<string> | null
+): Record<string, BubblePoint[]> {
   const out: Record<string, BubblePoint[]> = {};
   for (const sector of response.sectors) {
+    if (!activeSectors.has(sector.name)) continue;
     const points: BubblePoint[] = [];
     for (const s of sector.children) {
       if (s.change_pct == null || s.rel_volume == null) continue;
-      // Cap relative volume at 6× to keep the Y axis readable
+      if (tickerFilter != null && !tickerFilter.has(s.ticker)) continue;
       const y = Math.min(s.rel_volume, 6);
       points.push({
         x:       s.change_pct,
@@ -230,10 +251,12 @@ function LoadingState() {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 type Tab = "heatmap" | "bubbles";
+type FilterMode = "all" | "portfolio" | "watchlist";
 
 export default function HeatmapPage() {
   const [fetchKey, setFetchKey]           = useState(0);
   const [tab, setTab]                     = useState<Tab>("heatmap");
+  const [filterMode, setFilterMode]       = useState<FilterMode>("all");
   const [activeSectors, setActiveSectors] = useState<Set<string>>(
     () => new Set(Object.keys(SECTOR_COLORS))
   );
@@ -249,6 +272,8 @@ export default function HeatmapPage() {
   const allActive  = activeSectors.size === Object.keys(SECTOR_COLORS).length;
   const noneActive = activeSectors.size === 0;
 
+  // ── Data queries ─────────────────────────────────────────────────────────────
+
   const { data, isFetching, dataUpdatedAt, error } = useQuery<HeatmapResponse>({
     queryKey: ["heatmap", fetchKey],
     queryFn:  () => marketApi.heatmap().then((r) => r.data),
@@ -256,14 +281,82 @@ export default function HeatmapPage() {
     retry: 1,
   });
 
+  const { data: portfolios } = useQuery<Portfolio[]>({
+    queryKey: ["portfolios"],
+    queryFn:  () => portfolioApi.list().then((r) => r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Fetch positions for all active portfolios (only when portfolio filter might be used)
+  const portfolioIds = useMemo(
+    () => (portfolios ?? []).filter((p) => p.is_active).map((p) => p.id),
+    [portfolios]
+  );
+
+  const { data: allPositions } = useQuery<Position[]>({
+    queryKey: ["all-positions", portfolioIds],
+    queryFn: async () => {
+      const results = await Promise.all(
+        portfolioIds.map((id) => portfolioApi.positions(id).then((r) => r.data as Position[]))
+      );
+      return results.flat();
+    },
+    enabled: portfolioIds.length > 0,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: watchlists } = useQuery<WatchlistWithItems[]>({
+    queryKey: ["watchlists"],
+    queryFn:  () => watchlistApi.list().then((r) => r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // ── Derived ticker sets ───────────────────────────────────────────────────────
+
+  const portfolioTickers = useMemo(
+    () => new Set((allPositions ?? []).map((p) => p.ticker)),
+    [allPositions]
+  );
+
+  const watchlistTickers = useMemo(
+    () => new Set(
+      (watchlists ?? []).flatMap((wl) => (wl.items ?? []).map((item) => item.ticker))
+    ),
+    [watchlists]
+  );
+
+  const tickerFilter: Set<string> | null = useMemo(() => {
+    if (filterMode === "portfolio") return portfolioTickers;
+    if (filterMode === "watchlist") return watchlistTickers;
+    return null;
+  }, [filterMode, portfolioTickers, watchlistTickers]);
+
   const refresh = useCallback(() => setFetchKey((k) => k + 1), []);
 
   const updatedAgo = dataUpdatedAt
     ? Math.round((Date.now() - dataUpdatedAt) / 1000)
     : null;
 
-  const treeData      = data ? toTreeData(data) : [];
-  const bubblesBySector = data ? toBubblesBySector(data) : {};
+  const treeData        = useMemo(
+    () => data ? toTreeData(data, activeSectors, tickerFilter) : [],
+    [data, activeSectors, tickerFilter]
+  );
+  const bubblesBySector = useMemo(
+    () => data ? toBubblesBySector(data, activeSectors, tickerFilter) : {},
+    [data, activeSectors, tickerFilter]
+  );
+
+  // Count how many tickers match the current filter (for badge)
+  const filterCount = useMemo(() => {
+    if (!data || tickerFilter == null) return null;
+    let count = 0;
+    for (const sector of data.sectors) {
+      for (const s of sector.children) {
+        if (tickerFilter.has(s.ticker)) count++;
+      }
+    }
+    return count;
+  }, [data, tickerFilter]);
 
   return (
     <div className="flex flex-col h-full space-y-3">
@@ -288,23 +381,127 @@ export default function HeatmapPage() {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 p-1 rounded-lg bg-secondary/40 border border-border w-fit">
-        {(["heatmap", "bubbles"] as Tab[]).map((t) => (
+      {/* Tabs + Filter mode row */}
+      <div className="flex items-center gap-3 flex-wrap">
+        {/* Tab switcher */}
+        <div className="flex gap-1 p-1 rounded-lg bg-secondary/40 border border-border w-fit">
+          {(["heatmap", "bubbles"] as Tab[]).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={cn(
+                "px-4 py-1.5 rounded-md text-sm font-medium transition-colors capitalize",
+                tab === t
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+
+        {/* Filter mode buttons */}
+        <div className="flex items-center gap-1 p-1 rounded-lg bg-secondary/40 border border-border">
           <button
-            key={t}
-            onClick={() => setTab(t)}
+            onClick={() => setFilterMode("all")}
             className={cn(
-              "px-4 py-1.5 rounded-md text-sm font-medium transition-colors capitalize",
-              tab === t
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+              filterMode === "all"
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground"
             )}
           >
-            {t}
+            <Globe className="w-3.5 h-3.5" />
+            All
           </button>
-        ))}
+          <button
+            onClick={() => setFilterMode("portfolio")}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+              filterMode === "portfolio"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+            title="Show only tickers in your portfolio"
+          >
+            <Briefcase className="w-3.5 h-3.5" />
+            Portfolio
+            {filterMode === "portfolio" && filterCount !== null && (
+              <span className="ml-1 text-xs text-muted-foreground">({filterCount})</span>
+            )}
+          </button>
+          <button
+            onClick={() => setFilterMode("watchlist")}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+              filterMode === "watchlist"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+            title="Show only tickers in your watchlist"
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+            Watchlist
+            {filterMode === "watchlist" && filterCount !== null && (
+              <span className="ml-1 text-xs text-muted-foreground">({filterCount})</span>
+            )}
+          </button>
+        </div>
+
+        {/* Filter empty state hint */}
+        {tickerFilter != null && filterCount === 0 && data && (
+          <span className="text-xs text-amber-500">
+            No S&P 500 matches for your {filterMode}
+          </span>
+        )}
       </div>
+
+      {/* Sector filter (shared across both tabs) */}
+      {data && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {Object.entries(SECTOR_COLORS).map(([sector, color]) => {
+            const active = activeSectors.has(sector);
+            return (
+              <button
+                key={sector}
+                onClick={() => toggleSector(sector)}
+                className={cn(
+                  "flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs transition-all",
+                  active
+                    ? "border-transparent text-foreground"
+                    : "border-border text-muted-foreground/40 line-through"
+                )}
+                style={{ background: active ? color + "22" : "transparent" }}
+                title={active ? `Hide ${sector}` : `Show ${sector}`}
+              >
+                <div
+                  className="w-2 h-2 rounded-full shrink-0 transition-opacity"
+                  style={{ background: color, opacity: active ? 1 : 0.3 }}
+                />
+                {sector}
+              </button>
+            );
+          })}
+          <div className="flex gap-1 ml-1">
+            <button
+              onClick={() => setActiveSectors(new Set(Object.keys(SECTOR_COLORS)))}
+              disabled={allActive}
+              className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30 px-1"
+            >
+              All
+            </button>
+            <span className="text-muted-foreground/30 text-xs">|</span>
+            <button
+              onClick={() => setActiveSectors(new Set())}
+              disabled={noneActive}
+              className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30 px-1"
+            >
+              None
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Empty / loading states */}
       {!data && isFetching && <LoadingState />}
@@ -349,95 +546,47 @@ export default function HeatmapPage() {
 
       {/* ── Bubbles tab ───────────────────────────────────────────────────────── */}
       {data && tab === "bubbles" && (
-        <>
-          {/* Sector legend — click to filter */}
-          <div className="flex items-center gap-2 flex-wrap">
-            {Object.entries(SECTOR_COLORS).map(([sector, color]) => {
-              const active = activeSectors.has(sector);
-              return (
-                <button
+        <div className="flex-1 min-h-0 rounded-xl border border-border bg-card p-4">
+          <div className="text-xs text-muted-foreground mb-2 flex gap-4">
+            <span>X: Day change %</span>
+            <span>Y: Relative volume (today ÷ 20-day avg)</span>
+            <span>Size: Index weight</span>
+          </div>
+          <ResponsiveContainer width="100%" height="100%">
+            <ScatterChart margin={{ top: 10, right: 20, bottom: 30, left: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <XAxis
+                type="number"
+                dataKey="x"
+                name="Change"
+                unit="%"
+                tick={{ fontSize: 11, fill: "#64748b" }}
+                label={{ value: "Day Change (%)", position: "insideBottom", offset: -15, fontSize: 11, fill: "#64748b" }}
+              />
+              <YAxis
+                type="number"
+                dataKey="y"
+                name="Rel. Volume"
+                tick={{ fontSize: 11, fill: "#64748b" }}
+                label={{ value: "Rel. Volume", angle: -90, position: "insideLeft", offset: 10, fontSize: 11, fill: "#64748b" }}
+              />
+              <ZAxis type="number" dataKey="z" range={[40, 1800]} />
+              <Tooltip content={<BubbleTooltip />} cursor={{ strokeDasharray: "3 3" }} />
+              <ReferenceLine x={0} stroke="#475569" strokeDasharray="4 2" />
+              <ReferenceLine y={1} stroke="#475569" strokeDasharray="4 2" label={{ value: "avg vol", position: "right", fontSize: 10, fill: "#475569" }} />
+              {Object.entries(bubblesBySector).map(([sector, points]) => (
+                <Scatter
                   key={sector}
-                  onClick={() => toggleSector(sector)}
-                  className={cn(
-                    "flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs transition-all",
-                    active
-                      ? "border-transparent text-foreground"
-                      : "border-border text-muted-foreground/40 line-through"
-                  )}
-                  style={{ background: active ? color + "22" : "transparent" }}
-                  title={active ? `Hide ${sector}` : `Show ${sector}`}
-                >
-                  <div
-                    className="w-2 h-2 rounded-full shrink-0 transition-opacity"
-                    style={{ background: color, opacity: active ? 1 : 0.3 }}
-                  />
-                  {sector}
-                </button>
-              );
-            })}
-            <div className="flex gap-1 ml-1">
-              <button
-                onClick={() => setActiveSectors(new Set(Object.keys(SECTOR_COLORS)))}
-                disabled={allActive}
-                className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30 px-1"
-              >
-                All
-              </button>
-              <span className="text-muted-foreground/30 text-xs">|</span>
-              <button
-                onClick={() => setActiveSectors(new Set())}
-                disabled={noneActive}
-                className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30 px-1"
-              >
-                None
-              </button>
-            </div>
-          </div>
-
-          <div className="flex-1 min-h-0 rounded-xl border border-border bg-card p-4">
-            <div className="text-xs text-muted-foreground mb-2 flex gap-4">
-              <span>X: Day change %</span>
-              <span>Y: Relative volume (today ÷ 20-day avg)</span>
-              <span>Size: Index weight</span>
-            </div>
-            <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 10, right: 20, bottom: 30, left: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                <XAxis
-                  type="number"
-                  dataKey="x"
-                  name="Change"
-                  unit="%"
-                  tick={{ fontSize: 11, fill: "#64748b" }}
-                  label={{ value: "Day Change (%)", position: "insideBottom", offset: -15, fontSize: 11, fill: "#64748b" }}
+                  name={sector}
+                  data={points}
+                  fill={SECTOR_COLORS[sector] ?? "#94a3b8"}
+                  fillOpacity={0.75}
+                  isAnimationActive={false}
                 />
-                <YAxis
-                  type="number"
-                  dataKey="y"
-                  name="Rel. Volume"
-                  tick={{ fontSize: 11, fill: "#64748b" }}
-                  label={{ value: "Rel. Volume", angle: -90, position: "insideLeft", offset: 10, fontSize: 11, fill: "#64748b" }}
-                />
-                <ZAxis type="number" dataKey="z" range={[40, 1800]} />
-                <Tooltip content={<BubbleTooltip />} cursor={{ strokeDasharray: "3 3" }} />
-                {/* Reference lines */}
-                <ReferenceLine x={0} stroke="#475569" strokeDasharray="4 2" />
-                <ReferenceLine y={1} stroke="#475569" strokeDasharray="4 2" label={{ value: "avg vol", position: "right", fontSize: 10, fill: "#475569" }} />
-                {/* One Scatter per sector — filtered by activeSectors */}
-                {Object.entries(bubblesBySector).filter(([sector]) => activeSectors.has(sector)).map(([sector, points]) => (
-                  <Scatter
-                    key={sector}
-                    name={sector}
-                    data={points}
-                    fill={SECTOR_COLORS[sector] ?? "#94a3b8"}
-                    fillOpacity={0.75}
-                    isAnimationActive={false}
-                  />
-                ))}
-              </ScatterChart>
-            </ResponsiveContainer>
-          </div>
-        </>
+              ))}
+            </ScatterChart>
+          </ResponsiveContainer>
+        </div>
       )}
     </div>
   );
