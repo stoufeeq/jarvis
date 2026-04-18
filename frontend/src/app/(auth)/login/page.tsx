@@ -6,10 +6,12 @@ import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import { authApi } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
+import { useQueryClient } from "@tanstack/react-query";
 
 export default function LoginPage() {
   const router = useRouter();
   const { setTokens, setUser } = useAuthStore();
+  const qc = useQueryClient();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -22,6 +24,7 @@ export default function LoginPage() {
       setTokens(data.access_token, data.refresh_token);
       const { data: me } = await authApi.me();
       setUser(me);
+      qc.clear();
       router.push("/dashboard");
     } catch {
       toast.error("Invalid email or password");

@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth";
+import { useQueryClient } from "@tanstack/react-query";
 
 const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -33,6 +34,12 @@ const NAV = [
 export function Sidebar() {
   const pathname = usePathname();
   const logout = useAuthStore((s) => s.logout);
+  const qc = useQueryClient();
+
+  const handleLogout = () => {
+    logout();
+    qc.clear();
+  };
 
   return (
     <aside className="w-56 shrink-0 flex flex-col border-r border-border bg-card">
@@ -67,7 +74,7 @@ export function Sidebar() {
 
       <div className="px-3 pb-4">
         <button
-          onClick={logout}
+          onClick={handleLogout}
           className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-secondary hover:text-foreground w-full transition-colors"
         >
           <LogOut className="w-4 h-4" />
