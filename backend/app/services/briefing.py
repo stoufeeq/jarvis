@@ -192,9 +192,13 @@ class BriefingService:
                 log.warning("Failed to get portfolio summary for %s: %s", portfolio.name, exc)
 
         # --- Watchlist tickers ---
-        from app.models.watchlist import WatchlistItem
+        from app.models.watchlist import Watchlist, WatchlistItem
         wl_result = await self.db.execute(
-            select(WatchlistItem.ticker).distinct().limit(MAX_WATCHLIST_TICKERS)
+            select(WatchlistItem.ticker)
+            .join(Watchlist, WatchlistItem.watchlist_id == Watchlist.id)
+            .where(Watchlist.user_id == user.id)
+            .distinct()
+            .limit(MAX_WATCHLIST_TICKERS)
         )
         watchlist_tickers = [row[0] for row in wl_result.fetchall()]
 
