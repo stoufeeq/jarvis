@@ -137,6 +137,7 @@ class BriefingService:
     async def _generate(self, user: User, today: date) -> DailyBriefing:
         context = await self._build_context(user)
         content = await self._call_gemini(context)
+        content = self._regroup_tickers(content, context)
 
         sentiment = content.get("overall_sentiment", "neutral")
         bullets = content.get("summary_bullets", [])
@@ -153,6 +154,58 @@ class BriefingService:
         self.db.add(briefing)
         await self.db.flush()
         return briefing
+
+    @staticmethod
+    def _regroup_tickers(content: dict, context: dict) -> dict:
+        """Re-assign tickers to the correct section based on actual user data.
+
+        Gemini sometimes places tickers in the wrong section (e.g. a watchlist
+        ticker in the portfolio section). This method collects all items from
+        all three sections and redistributes them to where they belong.
+        """
+        portfolio_tickers = {
+            pos["ticker"]
+            for p in context.get("portfolios", [])
+            for pos in p.get("positions", [])
+        }
+        watchlist_tickers = set(context.get("watchlist_tickers", []))
+        sp500_tickers = {m["ticker"] for m in context.get("sp500_top_movers", [])}
+
+        # Collect all items from all three sections
+        all_items = []
+        for item in content.get("portfolio", []):
+            all_items.append(item)
+        for item in content.get("watchlist_opportunities", []):
+            all_items.append(item)
+        for item in content.get("sp500_opportunities", []):
+            all_items.append(item)
+
+        # Redistribute into correct sections
+        portfolio_items = []
+        watchlist_items = []
+        sp500_items = []
+
+        seen: set[str] = set()
+        for item in all_items:
+            ticker = item.get("ticker")
+            if not ticker or ticker in seen:
+                continue
+            seen.add(ticker)
+
+            if ticker in portfolio_tickers:
+                portfolio_items.append(item)
+            elif ticker in watchlist_tickers:
+                watchlist_items.append(item)
+            elif ticker in sp500_tickers:
+                sp500_items.append(item)
+            else:
+                # Ticker not in any known set — keep it in sp500 as a market opportunity
+                sp500_items.append(item)
+
+        content["portfolio"] = portfolio_items
+        content["watchlist_opportunities"] = watchlist_items
+        content["sp500_opportunities"] = sp500_items
+        return content
 
     async def _build_context(self, user: User) -> dict:
         """Assemble all data needed for the Gemini prompt."""
