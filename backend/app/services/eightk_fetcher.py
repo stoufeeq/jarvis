@@ -72,9 +72,10 @@ class EightKFetcher:
 
     async def fetch_for_ticker(self, ticker: str) -> int:
         """Fetch recent 8-K filings for ticker. Returns count of new items stored."""
-        from app.services.insider_fetcher import _load_cik_map  # reuse existing CIK cache
+        from app.services.insider_fetcher import InsiderTradeFetcher
 
-        cik_map = await asyncio.get_event_loop().run_in_executor(None, _load_cik_map)
+        fetcher = InsiderTradeFetcher(self.db)
+        cik_map = await fetcher._load_cik_map()
         cik = cik_map.get(ticker.upper())
         if not cik:
             log.debug("No CIK found for %s, skipping 8-K fetch", ticker)
