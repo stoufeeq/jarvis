@@ -100,6 +100,7 @@ export default function PortfolioPage() {
     queryFn: () => marketApi.quotes(tickers).then((r) => r.data),
     enabled: tickers.length > 0,
     staleTime: 60_000,
+    refetchInterval: 60_000,
   });
   const quoteMap = useMemo(
     () => Object.fromEntries(quotes.map((q) => [q.ticker, q])),
@@ -580,15 +581,15 @@ export default function PortfolioPage() {
                           </td>
                           <td className="px-4 py-3 text-right">{mv(String(pos.quantity))}</td>
                           <td className="px-4 py-3 text-right">{formatCurrency(pos.avg_cost, pos.currency)}</td>
-                          <td className="px-4 py-3 text-right">{formatCurrency(pos.current_price, pos.currency)}</td>
+                          <td className="px-4 py-3 text-right">{formatCurrency(q?.price ?? pos.current_price, pos.currency)}</td>
                           <td className={`px-4 py-3 text-right ${isPrivate ? "" : pnlColor(q?.change_pct)}`}>
                             {q ? formatPct(q.change_pct) : "—"}
                           </td>
-                          <td className={`px-4 py-3 text-right ${isPrivate ? "" : pnlColor(pos.unrealized_pnl)}`}>
-                            {mv(formatCurrency(pos.unrealized_pnl, pos.currency))}
+                          <td className={`px-4 py-3 text-right ${isPrivate ? "" : pnlColor(q ? (q.price - pos.avg_cost) * pos.quantity : pos.unrealized_pnl)}`}>
+                            {mv(formatCurrency(q ? (q.price - pos.avg_cost) * pos.quantity : pos.unrealized_pnl, pos.currency))}
                           </td>
-                          <td className={`px-4 py-3 text-right ${isPrivate ? "" : pnlColor(pos.unrealized_pnl_pct)}`}>
-                            {formatPct(pos.unrealized_pnl_pct)}
+                          <td className={`px-4 py-3 text-right ${isPrivate ? "" : pnlColor(q ? (q.price - pos.avg_cost) / pos.avg_cost * 100 : pos.unrealized_pnl_pct)}`}>
+                            {formatPct(q ? (q.price - pos.avg_cost) / pos.avg_cost * 100 : pos.unrealized_pnl_pct)}
                           </td>
                         </tr>,
                         isExpanded && (
