@@ -11,6 +11,7 @@ import { PrivacyToggle } from "@/components/ui/PrivacyToggle";
 import { usePrivacyStore } from "@/store/privacy";
 import type { Portfolio, Position, Signal, Quote, LiquidityResponse, Briefing } from "@/types";
 import Link from "next/link";
+import { AnimatedNumber } from "@/components/ui/AnimatedNumber";
 
 const PAGE_SIZE = 7;
 const MAX_MOVERS = 49;
@@ -287,7 +288,9 @@ function StatCard({
         <p className="text-sm text-muted-foreground truncate">{label}</p>
         {note && <span className="text-xs text-muted-foreground/60 shrink-0">{note}</span>}
       </div>
-      <p className={`text-lg sm:text-2xl font-bold mt-1 truncate ${valueClass ?? ""}`}>{value}</p>
+      <p className={`text-lg sm:text-2xl font-bold mt-1 truncate ${valueClass ?? ""}`}>
+        <AnimatedNumber value={value} />
+      </p>
     </div>
   );
 }

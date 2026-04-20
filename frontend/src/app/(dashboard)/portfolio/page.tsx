@@ -8,6 +8,7 @@ import { useCurrencyDisplay } from "@/hooks/useCurrencyDisplay";
 import { CurrencySwitcher } from "@/components/ui/CurrencySwitcher";
 import { PrivacyToggle } from "@/components/ui/PrivacyToggle";
 import { InlineChart } from "@/components/charts/InlineChart";
+import { AnimatedNumber } from "@/components/ui/AnimatedNumber";
 import { usePrivacyStore } from "@/store/privacy";
 import type { Portfolio, Position, Trade, Quote } from "@/types";
 import toast from "react-hot-toast";
@@ -862,7 +863,9 @@ function SummaryCard({ label, value, valueClass, note }: { label: string; value:
         <p className="text-xs text-muted-foreground truncate">{label}</p>
         {note && <span className="text-xs text-muted-foreground/60 shrink-0">{note}</span>}
       </div>
-      <p className={`text-base sm:text-xl font-bold mt-1 truncate ${valueClass ?? ""}`}>{value}</p>
+      <p className={`text-base sm:text-xl font-bold mt-1 truncate ${valueClass ?? ""}`}>
+        <AnimatedNumber value={value} />
+      </p>
     </div>
   );
 }
