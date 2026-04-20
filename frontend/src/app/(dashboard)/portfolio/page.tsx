@@ -107,6 +107,31 @@ export default function PortfolioPage() {
     [quotes]
   );
 
+  // Recompute summary totals from live quotes when available
+  const liveSummary = useMemo(() => {
+    if (!summary || !positions.length || !quotes.length) return null;
+    let totalValue = 0;
+    let totalCost = 0;
+    let dayChange = 0;
+    for (const pos of positions) {
+      const q = quoteMap[pos.ticker];
+      const price = q?.price ?? pos.current_price;
+      const cost = pos.avg_cost * pos.quantity;
+      totalCost += cost;
+      if (price != null) {
+        totalValue += price * pos.quantity;
+        if (q?.previous_close) {
+          dayChange += (price - q.previous_close) * pos.quantity;
+        }
+      }
+    }
+    const totalPnl = totalValue - totalCost;
+    const totalPnlPct = totalCost > 0 ? (totalPnl / totalCost) * 100 : null;
+    const prevTotal = totalValue - dayChange;
+    const dayChangePct = prevTotal > 0 ? (dayChange / prevTotal) * 100 : null;
+    return { totalValue, totalCost, totalPnl, totalPnlPct, dayChange, dayChangePct };
+  }, [summary, positions, quotes, quoteMap]);
+
   const { displayCurrency, setDisplayCurrency, rate, convert, base: baseCurrency } =
     useCurrencyDisplay(summary?.currency ?? "USD");
 
@@ -485,30 +510,30 @@ export default function PortfolioPage() {
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
               <SummaryCard
                 label="Total Portfolio Value"
-                value={mv(formatCurrency(convert(summary?.total_value), displayCurrency))}
+                value={mv(formatCurrency(convert(liveSummary?.totalValue ?? summary?.total_value), displayCurrency))}
                 note={isPrivate ? undefined : currencyLabel(displayCurrency)}
               />
               <SummaryCard
                 label="Total Cost"
-                value={mv(formatCurrency(convert(summary?.total_cost), displayCurrency))}
+                value={mv(formatCurrency(convert(liveSummary?.totalCost ?? summary?.total_cost), displayCurrency))}
                 note={isPrivate ? undefined : currencyLabel(displayCurrency)}
               />
               <SummaryCard
                 label="Unrealized P&L"
-                value={mv(formatCurrency(convert(summary?.total_pnl), displayCurrency))}
-                valueClass={isPrivate ? undefined : pnlColor(summary?.total_pnl)}
+                value={mv(formatCurrency(convert(liveSummary?.totalPnl ?? summary?.total_pnl), displayCurrency))}
+                valueClass={isPrivate ? undefined : pnlColor(liveSummary?.totalPnl ?? summary?.total_pnl)}
                 note={isPrivate ? undefined : currencyLabel(displayCurrency)}
               />
               <SummaryCard
                 label="Return"
-                value={formatPct(summary?.total_pnl_pct)}
-                valueClass={pnlColor(summary?.total_pnl_pct)}
+                value={formatPct(liveSummary?.totalPnlPct ?? summary?.total_pnl_pct)}
+                valueClass={pnlColor(liveSummary?.totalPnlPct ?? summary?.total_pnl_pct)}
               />
               <SummaryCard
                 label="Today's Change"
-                value={mv(formatCurrency(convert(summary?.day_change), displayCurrency))}
-                valueClass={isPrivate ? undefined : pnlColor(summary?.day_change)}
-                note={isPrivate || summary?.day_change_pct == null ? undefined : formatPct(summary.day_change_pct)}
+                value={mv(formatCurrency(convert(liveSummary?.dayChange ?? summary?.day_change), displayCurrency))}
+                valueClass={isPrivate ? undefined : pnlColor(liveSummary?.dayChange ?? summary?.day_change)}
+                note={isPrivate || (liveSummary?.dayChangePct ?? summary?.day_change_pct) == null ? undefined : formatPct(liveSummary?.dayChangePct ?? summary?.day_change_pct)}
               />
             </div>
           </div>

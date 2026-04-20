@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Plus, Check } from "lucide-react";
 import { portfolioApi, signalsApi, accountsApi, marketApi, watchlistApi, briefingApi } from "@/lib/api";
@@ -9,7 +9,7 @@ import { useCurrencyDisplay } from "@/hooks/useCurrencyDisplay";
 import { CurrencySwitcher } from "@/components/ui/CurrencySwitcher";
 import { PrivacyToggle } from "@/components/ui/PrivacyToggle";
 import { usePrivacyStore } from "@/store/privacy";
-import type { Portfolio, Signal, LiquidityResponse, Briefing } from "@/types";
+import type { Portfolio, Position, Signal, Quote, LiquidityResponse, Briefing } from "@/types";
 import Link from "next/link";
 
 const PAGE_SIZE = 7;
@@ -23,6 +23,39 @@ export default function DashboardPage() {
     queryFn: () => portfolioApi.list().then((r) => r.data),
     staleTime: 60_000,
   });
+
+  // Fetch positions for all active portfolios to recompute live totals
+  const portfolioIds = useMemo(
+    () => portfolios.filter((p) => p.is_active).map((p) => p.id),
+    [portfolios]
+  );
+  const { data: allPositions = [] } = useQuery<Position[]>({
+    queryKey: ["all-positions", portfolioIds],
+    queryFn: async () => {
+      const results = await Promise.all(
+        portfolioIds.map((id) => portfolioApi.positions(id).then((r) => r.data as Position[]))
+      );
+      return results.flat();
+    },
+    enabled: portfolioIds.length > 0,
+    staleTime: 60_000,
+  });
+
+  const positionTickers = useMemo(
+    () => [...new Set(allPositions.map((p) => p.ticker))],
+    [allPositions]
+  );
+  const { data: liveQuotes = [] } = useQuery<Quote[]>({
+    queryKey: ["dashboard-quotes", positionTickers],
+    queryFn: () => marketApi.quotes(positionTickers).then((r) => r.data),
+    enabled: positionTickers.length > 0,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  });
+  const liveQuoteMap = useMemo(
+    () => Object.fromEntries(liveQuotes.map((q) => [q.ticker, q])),
+    [liveQuotes]
+  );
 
   const { data: signals = [] } = useQuery<Signal[]>({
     queryKey: ["signals", "recent"],
@@ -80,11 +113,36 @@ export default function DashboardPage() {
     return rate ? amount * rate : amount; // keep as-is until rate loads
   }
 
-  const portfolioValue = portfolios.reduce((s, p) => s + toUsd(p.total_value ?? 0, p.currency || "USD"), 0);
+  // Recompute totals from live quotes when available, fall back to DB-cached
+  const liveTotals = useMemo(() => {
+    if (!allPositions.length || !liveQuotes.length) return null;
+    let totalValue = 0;
+    let totalCost = 0;
+    let dayChange = 0;
+    for (const pos of allPositions) {
+      const q = liveQuoteMap[pos.ticker];
+      const price = q?.price ?? pos.current_price;
+      const cost = pos.avg_cost * pos.quantity;
+      totalCost += cost;
+      if (price != null) {
+        totalValue += price * pos.quantity;
+        if (q?.previous_close) {
+          dayChange += (price - q.previous_close) * pos.quantity;
+        }
+      }
+    }
+    const totalPnl = totalValue - totalCost;
+    return { totalValue, totalCost, totalPnl, dayChange };
+  }, [allPositions, liveQuotes, liveQuoteMap]);
+
+  const portfolioValue = liveTotals?.totalValue
+    ?? portfolios.reduce((s, p) => s + toUsd(p.total_value ?? 0, p.currency || "USD"), 0);
   const liquidityUsd = liquidity?.total_usd ?? 0;
   const totalValue = portfolioValue + liquidityUsd;
-  const totalPnl = portfolios.reduce((s, p) => s + toUsd(p.total_pnl ?? 0, p.currency || "USD"), 0);
-  const totalDayChange = portfolios.reduce((s, p) => s + toUsd(p.day_change ?? 0, p.currency || "USD"), 0);
+  const totalPnl = liveTotals?.totalPnl
+    ?? portfolios.reduce((s, p) => s + toUsd(p.total_pnl ?? 0, p.currency || "USD"), 0);
+  const totalDayChange = liveTotals?.dayChange
+    ?? portfolios.reduce((s, p) => s + toUsd(p.day_change ?? 0, p.currency || "USD"), 0);
   const prevTotal = portfolioValue - totalDayChange;
   const totalDayChangePct = prevTotal ? (totalDayChange / prevTotal) * 100 : null;
 
