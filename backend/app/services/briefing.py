@@ -162,6 +162,7 @@ class BriefingService:
         Gemini sometimes places tickers in the wrong section (e.g. a watchlist
         ticker in the portfolio section). This method collects all items from
         all three sections and redistributes them to where they belong.
+        Priority: portfolio > watchlist > sp500/other.
         """
         portfolio_tickers = {
             pos["ticker"]
@@ -169,7 +170,17 @@ class BriefingService:
             for pos in p.get("positions", [])
         }
         watchlist_tickers = set(context.get("watchlist_tickers", []))
-        sp500_tickers = {m["ticker"] for m in context.get("sp500_top_movers", [])}
+
+        log.info(
+            "Regroup: portfolio_tickers=%s, watchlist_tickers=%s",
+            portfolio_tickers, watchlist_tickers,
+        )
+        log.info(
+            "Regroup before: portfolio=%s, watchlist=%s, sp500=%s",
+            [i.get("ticker") for i in content.get("portfolio", [])],
+            [i.get("ticker") for i in content.get("watchlist_opportunities", [])],
+            [i.get("ticker") for i in content.get("sp500_opportunities", [])],
+        )
 
         # Collect all items from all three sections
         all_items = []
@@ -196,15 +207,19 @@ class BriefingService:
                 portfolio_items.append(item)
             elif ticker in watchlist_tickers:
                 watchlist_items.append(item)
-            elif ticker in sp500_tickers:
-                sp500_items.append(item)
             else:
-                # Ticker not in any known set — keep it in sp500 as a market opportunity
                 sp500_items.append(item)
 
         content["portfolio"] = portfolio_items
         content["watchlist_opportunities"] = watchlist_items
         content["sp500_opportunities"] = sp500_items
+
+        log.info(
+            "Regroup after: portfolio=%s, watchlist=%s, sp500=%s",
+            [i.get("ticker") for i in portfolio_items],
+            [i.get("ticker") for i in watchlist_items],
+            [i.get("ticker") for i in sp500_items],
+        )
         return content
 
     async def _build_context(self, user: User) -> dict:
@@ -222,21 +237,22 @@ class BriefingService:
         portfolio_context = []
         for portfolio in portfolios:
             try:
-                summary = await PortfolioService(self.db).get_summary(portfolio)
-                positions = summary.get("positions", [])[:MAX_PORTFOLIO_POSITIONS]
+                svc = PortfolioService(self.db)
+                summary = await svc.get_summary(portfolio)
+                positions = (await svc.list_positions(portfolio.id))[:MAX_PORTFOLIO_POSITIONS]
                 portfolio_context.append({
                     "name": portfolio.name,
                     "currency": portfolio.currency,
-                    "total_value": summary.get("total_value"),
-                    "total_pnl_pct": summary.get("total_pnl_pct"),
-                    "day_change_pct": summary.get("day_change_pct"),
+                    "total_value": summary.total_value,
+                    "total_pnl_pct": summary.total_pnl_pct,
+                    "day_change_pct": summary.day_change_pct,
                     "positions": [
                         {
-                            "ticker": p.get("ticker"),
-                            "quantity": p.get("quantity"),
-                            "avg_cost": p.get("avg_cost"),
-                            "current_price": p.get("current_price"),
-                            "unrealized_pnl_pct": p.get("unrealized_pnl_pct"),
+                            "ticker": p.ticker,
+                            "quantity": float(p.quantity),
+                            "avg_cost": float(p.avg_cost),
+                            "current_price": float(p.current_price) if p.current_price else None,
+                            "unrealized_pnl_pct": float(p.unrealized_pnl_pct) if p.unrealized_pnl_pct else None,
                         }
                         for p in positions
                     ],
