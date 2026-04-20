@@ -1,9 +1,9 @@
 name: Build and Deploy to Azure
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+  # push:
+  #   branches: [main]
+  workflow_dispatch:  # manual trigger only
 
 env:
   ACR: jarvisapp88b2b8.azurecr.io
