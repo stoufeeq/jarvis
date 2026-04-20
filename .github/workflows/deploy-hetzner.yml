@@ -85,13 +85,20 @@ jobs:
             # Log in to GHCR on the server
             echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_USER" --password-stdin
 
+            # Pull latest code (for compose files, .env, migrations etc.)
+            cd /opt/jarvis
+            git pull origin main
+
             # Pull latest images
             docker pull ghcr.io/stoufeeq/jarvis-backend:latest
             docker pull ghcr.io/stoufeeq/jarvis-frontend:latest
 
+            # Run migrations
+            docker run --rm --network jarvis_default --env-file backend/.env \
+              ghcr.io/stoufeeq/jarvis-backend:latest alembic upgrade head
+
             # Restart backend services using compose override
-            cd /opt/jarvis
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d backend celery_worker celery_beat
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate backend celery_worker celery_beat
 
             # Restart frontend
             docker stop jarvis-frontend 2>/dev/null || true
