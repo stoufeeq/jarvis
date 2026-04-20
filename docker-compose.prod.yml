@@ -1,0 +1,20 @@
+services:
+  backend:
+    image: ghcr.io/stoufeeq/jarvis-backend:latest
+    build:
+      context: ./backend
+
+  celery_worker:
+    image: ghcr.io/stoufeeq/jarvis-backend:latest
+    build:
+      context: ./backend
+
+  celery_beat:
+    image: ghcr.io/stoufeeq/jarvis-backend:latest
+    build:
+      context: ./backend
+
+  flower:
+    image: ghcr.io/stoufeeq/jarvis-backend:latest
+    build:
+      context: ./backend

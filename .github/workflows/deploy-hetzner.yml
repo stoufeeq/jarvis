@@ -1,0 +1,102 @@
+name: Deploy to Hetzner
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE: ghcr.io/stoufeeq/jarvis-backend
+  FRONTEND_IMAGE: ghcr.io/stoufeeq/jarvis-frontend
+
+jobs:
+  # ─── Build Backend Image ─────────────────────────────────────────────────────
+  build-backend:
+    name: Build backend image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+            ${{ env.BACKEND_IMAGE }}:latest
+
+  # ─── Build Frontend Image ────────────────────────────────────────────────────
+  build-frontend:
+    name: Build frontend image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=http://${{ secrets.HETZNER_HOST }}:8002
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+            ${{ env.FRONTEND_IMAGE }}:latest
+
+  # ─── Deploy to Server ────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to Hetzner
+    runs-on: ubuntu-latest
+    needs: [build-backend, build-frontend]
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        env:
+          GH_USER: ${{ github.actor }}
+          GH_TOKEN: ${{ secrets.GHCR_PAT }}
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: root
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          envs: GH_USER,GH_TOKEN
+          script: |
+            # Log in to GHCR on the server
+            echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_USER" --password-stdin
+
+            # Pull latest images
+            docker pull ghcr.io/stoufeeq/jarvis-backend:latest
+            docker pull ghcr.io/stoufeeq/jarvis-frontend:latest
+
+            # Restart backend services using compose override
+            cd /opt/jarvis
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d backend celery_worker celery_beat
+
+            # Restart frontend
+            docker stop jarvis-frontend 2>/dev/null || true
+            docker rm jarvis-frontend 2>/dev/null || true
+            docker run -d --name jarvis-frontend --restart unless-stopped -p 3000:3000 ghcr.io/stoufeeq/jarvis-frontend:latest
+
+            # Clean up old images
+            docker image prune -f
