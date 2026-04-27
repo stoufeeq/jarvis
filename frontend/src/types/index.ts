@@ -250,6 +250,16 @@ export interface BriefingMacroEvent {
   impact: string;
 }
 
+export interface BriefingSession {
+  state: "open" | "pre_market" | "after_hours" | "closed_overnight" | "closed_weekend" | "closed_holiday";
+  is_trading_day: boolean;
+  is_weekend: boolean;
+  is_holiday: boolean;
+  current_et: string;
+  next_trading_day: string;
+  description: string;
+}
+
 export interface BriefingContent {
   overall_sentiment: "bullish" | "neutral" | "cautious" | "bearish";
   market_context: string;
@@ -258,6 +268,7 @@ export interface BriefingContent {
   watchlist_opportunities: BriefingWatchlistItem[];
   sp500_opportunities: BriefingSP500Item[];
   summary_bullets: string[];
+  session?: BriefingSession;
 }
 
 export interface Briefing {

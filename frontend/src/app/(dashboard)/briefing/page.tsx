@@ -199,6 +199,24 @@ function BriefingView({ briefing }: { briefing: Briefing }) {
         </div>
       </div>
 
+      {/* Market session badge */}
+      {content?.session?.description && (
+        <div className={`rounded-lg border px-4 py-2.5 flex items-center gap-2 ${
+          content.session.state === "open"
+            ? "border-emerald-500/30 bg-emerald-500/5"
+            : content.session.state === "pre_market" || content.session.state === "after_hours"
+              ? "border-amber-500/30 bg-amber-500/5"
+              : "border-border bg-secondary/30"
+        }`}>
+          <span className={`w-2 h-2 rounded-full ${
+            content.session.state === "open" ? "bg-emerald-500 animate-pulse"
+              : content.session.state === "pre_market" || content.session.state === "after_hours" ? "bg-amber-500"
+              : "bg-muted-foreground/50"
+          }`} />
+          <p className="text-xs sm:text-sm text-foreground">{content.session.description}</p>
+        </div>
+      )}
+
       {/* Market context */}
       {content?.market_context && (
         <div className="rounded-lg border border-border bg-secondary/30 px-4 py-3">

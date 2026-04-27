@@ -50,8 +50,10 @@ Briefing JSON structure:
 
 import json
 import logging
+import xml.etree.ElementTree as ET
 from datetime import UTC, date, datetime, timedelta
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -60,6 +62,7 @@ from app.models.briefing import DailyBriefing
 from app.models.news import NewsItem
 from app.models.signal import Signal
 from app.models.user import User
+from app.services.market_session import MarketSession
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +71,14 @@ MAX_WATCHLIST_TICKERS = 20
 MAX_SP500_MOVERS = 10
 MAX_SIGNALS_PER_TICKER = 3
 MAX_NEWS_ITEMS = 10
+MAX_MARKET_HEADLINES = 12
+
+# Yahoo Finance RSS feeds for general market news
+MARKET_NEWS_FEEDS = [
+    ("S&P 500", "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%5EGSPC&region=US&lang=en-US"),
+    ("NASDAQ",  "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%5EIXIC&region=US&lang=en-US"),
+    ("Dow",     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%5EDJI&region=US&lang=en-US"),
+]
 
 
 class BriefingService:
@@ -138,6 +149,9 @@ class BriefingService:
         context = await self._build_context(user)
         content = await self._call_gemini(context)
         content = self._regroup_tickers(content, context)
+
+        # Surface session info so the UI can show "Market closed for weekend" etc.
+        content["session"] = context.get("session", {})
 
         sentiment = content.get("overall_sentiment", "neutral")
         bullets = content.get("summary_bullets", [])
@@ -344,15 +358,66 @@ class BriefingService:
             if s.signal_type.value == "macro_event"
         ]
 
+        # --- Market session state ---
+        session = MarketSession()
+        session_info = {
+            "state": session.state,
+            "is_trading_day": session.is_trading_day,
+            "is_weekend": session.is_weekend,
+            "is_holiday": session.is_holiday,
+            "current_et": session.now_et.strftime("%A %Y-%m-%d %H:%M ET"),
+            "next_trading_day": session.next_trading_day().strftime("%A %Y-%m-%d"),
+            "description": session.describe(),
+        }
+
+        # --- Global market headlines (Yahoo Finance RSS) ---
+        market_headlines = await self._fetch_market_headlines()
+
         return {
             "date": str(datetime.now(UTC).date()),
+            "session": session_info,
             "portfolios": portfolio_context,
             "watchlist_tickers": watchlist_tickers,
             "signals_by_ticker": signals_by_ticker,
             "recent_news": news_context,
+            "market_headlines": market_headlines,
             "sp500_top_movers": sp500_movers,
             "macro_events": macro_events,
         }
+
+    @staticmethod
+    async def _fetch_market_headlines() -> list[dict]:
+        """Fetch general market headlines from Yahoo Finance RSS feeds.
+
+        Returns up to MAX_MARKET_HEADLINES deduplicated headlines from the
+        S&P 500, NASDAQ, and Dow news feeds.
+        """
+        headlines: list[dict] = []
+        seen_titles: set[str] = set()
+        try:
+            async with httpx.AsyncClient(timeout=10.0, headers={"User-Agent": "Mozilla/5.0"}) as client:
+                for index_name, feed_url in MARKET_NEWS_FEEDS:
+                    try:
+                        r = await client.get(feed_url)
+                        r.raise_for_status()
+                        root = ET.fromstring(r.text)
+                        for item in root.findall(".//item")[:6]:
+                            title = (item.findtext("title") or "").strip()
+                            pub_date = (item.findtext("pubDate") or "").strip()
+                            if not title or title in seen_titles:
+                                continue
+                            seen_titles.add(title)
+                            headlines.append({
+                                "source": index_name,
+                                "title": title,
+                                "pub_date": pub_date,
+                            })
+                    except Exception as exc:
+                        log.warning("Failed to fetch %s headlines: %s", index_name, exc)
+        except Exception as exc:
+            log.warning("Market headlines fetch failed entirely: %s", exc)
+
+        return headlines[:MAX_MARKET_HEADLINES]
 
     async def _call_gemini(self, context: dict) -> dict:
         """Send assembled context to Gemini and parse the structured JSON response."""
@@ -389,9 +454,53 @@ class BriefingService:
             f"  {e['event']}" for e in context.get("macro_events", [])
         ) or "  No high-impact macro events in the next 7 days."
 
+        market_headlines_str = "\n".join(
+            f"  [{h.get('source', '?')}] {h['title']}"
+            for h in context.get("market_headlines", [])
+        ) or "  No global market headlines available."
+
         watchlist = ", ".join(context.get("watchlist_tickers", []))
 
-        prompt = f"""You are a professional financial advisor preparing a pre-market briefing for {context['date']}.
+        # Build session-aware framing
+        session = context.get("session", {})
+        session_state = session.get("state", "open")
+        session_desc = session.get("description", "")
+        next_open = session.get("next_trading_day", "")
+
+        if session_state == "open":
+            framing = "The market is currently OPEN. Provide intraday-actionable analysis."
+            briefing_focus = f"actionable plays for the rest of today's session ({context['date']})"
+        elif session_state == "pre_market":
+            framing = "We are in PRE-MARKET hours. Focus on what's likely to drive today's regular session at 9:30 AM ET."
+            briefing_focus = f"today's open and regular session ({context['date']})"
+        elif session_state == "after_hours":
+            framing = (
+                "We are in AFTER-HOURS. Reflect on today's close, identify overnight risks, "
+                f"and outline expectations for the next regular session ({next_open})."
+            )
+            briefing_focus = f"reflection on today's close + outlook for next open ({next_open})"
+        elif session_state in ("closed_weekend", "closed_holiday"):
+            day_type = "weekend" if session_state == "closed_weekend" else "US public holiday"
+            framing = (
+                f"The US market is CLOSED ({day_type}). Use this briefing to look at developments "
+                f"during the closure (overseas markets, geopolitical events, weekend news flow) "
+                f"that could shape the next open on {next_open}. Avoid intraday tactical language; "
+                f"frame everything as preparation for the next trading day."
+            )
+            briefing_focus = f"outlook and preparation for the next open on {next_open}"
+        else:  # closed_overnight
+            framing = (
+                f"The market is closed overnight. Reflect on today's session and outline "
+                f"what to watch for the next open on {next_open}."
+            )
+            briefing_focus = f"overnight risks + next open ({next_open})"
+
+        prompt = f"""You are a professional financial advisor preparing a market briefing.
+
+CURRENT TIME (US Eastern): {session.get('current_et', context['date'])}
+MARKET STATUS: {session_desc}
+
+{framing}
 
 USER PORTFOLIO:
 {portfolio_str or "  No portfolio data available."}
@@ -401,16 +510,26 @@ WATCHLIST TICKERS: {watchlist or "None"}
 RECENT SIGNALS (last 3 days):
 {signals_str or "  No recent signals."}
 
-RECENT NEWS (scored by AI):
-{news_str or "  No recent news."}
+RECENT NEWS (scored by AI, ticker-specific):
+{news_str or "  No recent ticker-specific news."}
 
-S&P 500 TOP MOVERS TODAY:
+GLOBAL MARKET HEADLINES (from S&P 500 / NASDAQ / Dow news feeds):
+{market_headlines_str}
+
+S&P 500 TOP MOVERS:
 {movers_str or "  No heatmap data."}
 
 UPCOMING MACRO EVENTS:
 {macro_str}
 
-Based on all the above, generate a comprehensive pre-market briefing. For each item provide specific, actionable analysis.
+Generate a comprehensive briefing focused on: {briefing_focus}.
+
+Use the GLOBAL MARKET HEADLINES to identify macro themes, geopolitical risks, central bank actions,
+or sector-wide narratives that could impact the user's positions and watchlist. When the market is
+closed, weight these headlines heavily — they shape the next open.
+
+For each portfolio/watchlist/S&P 500 item, provide specific, actionable analysis grounded in
+either ticker-specific signals/news, OR a clear thread to a global headline above.
 
 Respond with ONLY valid JSON (no markdown, no explanation) in exactly this structure:
 {{
