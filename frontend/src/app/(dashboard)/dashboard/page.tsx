@@ -67,7 +67,7 @@ export default function DashboardPage() {
   const { data: heatmapData } = useQuery({
     queryKey: ["heatmap"],
     queryFn: () => marketApi.heatmap().then((r) => r.data),
-    staleTime: 120_000,
+    staleTime: 30 * 60 * 1000,  // 30 min — shared cache with /heatmap page
   });
 
   const { data: liquidity } = useQuery<LiquidityResponse>({

@@ -15,6 +15,7 @@ celery_app = Celery(
         "app.workers.tasks.news_digest",
         "app.workers.tasks.insider_fetch",
         "app.workers.tasks.eightk_fetch",
+        "app.workers.tasks.heatmap_warm",
     ],
 )
 
@@ -66,5 +67,11 @@ celery_app.conf.beat_schedule = {
     "news-digest-evening": {
         "task": "app.workers.tasks.news_digest.fetch_and_process_news",
         "schedule": crontab(hour=16, minute=30),
+    },
+    # Pre-warm the S&P 500 heatmap cache every 30 min so dashboard/heatmap
+    # never wait for the ~450 yfinance fetch. Task self-skips on weekends/holidays.
+    "warm-heatmap-cache": {
+        "task": "app.workers.tasks.heatmap_warm.warm_heatmap_cache",
+        "schedule": 1800,  # every 30 minutes
     },
 }

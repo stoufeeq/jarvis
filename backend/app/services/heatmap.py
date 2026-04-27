@@ -16,16 +16,17 @@ from typing import Any
 
 from app.data.sp500 import SP500
 
-CACHE_TTL = 120  # seconds
+CACHE_TTL = 1800  # 30 minutes — aligned with frontend staleTime and Celery pre-warm interval
 
 _cache: dict[str, Any] = {}
 
 
 class HeatmapService:
-    async def get_sp500_heatmap(self) -> dict:
-        cached = _cache.get("sp500")
-        if cached and (time.monotonic() - cached["ts"]) < CACHE_TTL:
-            return cached["data"]
+    async def get_sp500_heatmap(self, force_refresh: bool = False) -> dict:
+        if not force_refresh:
+            cached = _cache.get("sp500")
+            if cached and (time.monotonic() - cached["ts"]) < CACHE_TTL:
+                return cached["data"]
 
         loop = asyncio.get_event_loop()
         data = await loop.run_in_executor(None, _fetch_heatmap_sync)

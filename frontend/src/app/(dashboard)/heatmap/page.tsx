@@ -14,7 +14,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { RefreshCw, Briefcase, BookOpen, Globe } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { marketApi, portfolioApi, watchlistApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { Portfolio, Position, WatchlistItem } from "@/types";
@@ -254,7 +254,7 @@ type Tab = "heatmap" | "bubbles";
 type FilterMode = "all" | "portfolio" | "watchlist";
 
 export default function HeatmapPage() {
-  const [fetchKey, setFetchKey]           = useState(0);
+  const qc = useQueryClient();
   const [tab, setTab]                     = useState<Tab>("heatmap");
   const [filterMode, setFilterMode]       = useState<FilterMode>("all");
   const [activeSectors, setActiveSectors] = useState<Set<string>>(
@@ -275,9 +275,9 @@ export default function HeatmapPage() {
   // ── Data queries ─────────────────────────────────────────────────────────────
 
   const { data, isFetching, dataUpdatedAt, error } = useQuery<HeatmapResponse>({
-    queryKey: ["heatmap", fetchKey],
+    queryKey: ["heatmap"],
     queryFn:  () => marketApi.heatmap().then((r) => r.data),
-    staleTime: Infinity,
+    staleTime: 30 * 60 * 1000,  // 30 min — matches backend cache TTL
     retry: 1,
   });
 
@@ -331,7 +331,9 @@ export default function HeatmapPage() {
     return null;
   }, [filterMode, portfolioTickers, watchlistTickers]);
 
-  const refresh = useCallback(() => setFetchKey((k) => k + 1), []);
+  const refresh = useCallback(() => {
+    qc.invalidateQueries({ queryKey: ["heatmap"] });
+  }, [qc]);
 
   const updatedAgo = dataUpdatedAt
     ? Math.round((Date.now() - dataUpdatedAt) / 1000)

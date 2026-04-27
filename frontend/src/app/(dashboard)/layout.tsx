@@ -8,7 +8,7 @@ import { BottomNav } from "@/components/layout/BottomNav";
 import { AdvisorFAB } from "@/components/layout/AdvisorFAB";
 import { useAuthStore } from "@/store/auth";
 import { useQueryClient } from "@tanstack/react-query";
-import { alertsApi } from "@/lib/api";
+import { alertsApi, marketApi } from "@/lib/api";
 import type { Alert } from "@/types";
 import toast from "react-hot-toast";
 
@@ -74,6 +74,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   // Only poll once fully hydrated and authenticated
   useAlertPoller(hydrated && !!accessToken);
+
+  // Prefetch S&P 500 heatmap in the background once authenticated, so by the
+  // time the user navigates to /heatmap or /dashboard the data is already there.
+  // staleTime: 30 min on the query means this is a no-op if cache is fresh.
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (!hydrated || !accessToken) return;
+    qc.prefetchQuery({
+      queryKey: ["heatmap"],
+      queryFn: () => marketApi.heatmap().then((r) => r.data),
+      staleTime: 30 * 60 * 1000,
+    });
+  }, [hydrated, accessToken, qc]);
 
   if (!hydrated) return null;
 
