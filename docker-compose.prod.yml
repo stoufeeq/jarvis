@@ -1,20 +1,47 @@
 services:
+  # ── Production overrides: GHCR images + Docker-internal hostnames ────────────
+  # The backend's .env file uses local Mac dev hostnames/ports (localhost:6382 etc).
+  # In production all services live on the same Docker network and must use
+  # internal container names + standard ports. These environment values override
+  # whatever .env says.
+
   backend:
     image: ghcr.io/stoufeeq/jarvis-backend:latest
     build:
       context: ./backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://jarvis:jarvis_dev@postgres:5432/jarvis
+      DATABASE_URL_SYNC: postgresql://jarvis:jarvis_dev@postgres:5432/jarvis
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
 
   celery_worker:
     image: ghcr.io/stoufeeq/jarvis-backend:latest
     build:
       context: ./backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://jarvis:jarvis_dev@postgres:5432/jarvis
+      DATABASE_URL_SYNC: postgresql://jarvis:jarvis_dev@postgres:5432/jarvis
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
 
   celery_beat:
     image: ghcr.io/stoufeeq/jarvis-backend:latest
     build:
       context: ./backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://jarvis:jarvis_dev@postgres:5432/jarvis
+      DATABASE_URL_SYNC: postgresql://jarvis:jarvis_dev@postgres:5432/jarvis
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
 
   flower:
     image: ghcr.io/stoufeeq/jarvis-backend:latest
     build:
       context: ./backend
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
