@@ -21,6 +21,7 @@ services:
     build:
       context: ./backend
     environment:
+      COMMAND: worker  # entrypoint switches on this — without it, container runs uvicorn instead
       DATABASE_URL: postgresql+asyncpg://jarvis:jarvis_dev@postgres:5432/jarvis
       DATABASE_URL_SYNC: postgresql://jarvis:jarvis_dev@postgres:5432/jarvis
       REDIS_URL: redis://redis:6379/0
@@ -32,6 +33,7 @@ services:
     build:
       context: ./backend
     environment:
+      COMMAND: beat  # entrypoint switches on this — without it, container runs uvicorn instead
       DATABASE_URL: postgresql+asyncpg://jarvis:jarvis_dev@postgres:5432/jarvis
       DATABASE_URL_SYNC: postgresql://jarvis:jarvis_dev@postgres:5432/jarvis
       REDIS_URL: redis://redis:6379/0
