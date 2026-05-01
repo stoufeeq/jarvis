@@ -73,15 +73,16 @@ async def get_recent_outcomes(
     return await SignalOutcomeService(db).list_recent(limit=limit)
 
 
-@router.post("/outcomes/backfill")
+@router.post("/outcomes/backfill", status_code=202)
 async def backfill_outcomes(
     limit: int | None = Query(None, description="Max signals to process (omit for all)"),
     _: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
 ):
-    """One-shot: populate signal_outcomes for existing signals using
-    historical yfinance prices. Safe to re-run — only processes signals
-    that don't already have an outcome row."""
-    count = await SignalOutcomeService(db).backfill_from_existing_signals(limit=limit)
-    await db.commit()
-    return {"backfilled": count}
+    """Dispatch a background Celery task to populate signal_outcomes for
+    existing signals using historical yfinance prices. Returns immediately;
+    backfill runs asynchronously and may take minutes for large signal sets.
+    Safe to re-run — only processes signals that don't already have an
+    outcome row."""
+    from app.workers.tasks.signal_outcome import backfill_signal_outcomes
+    task = backfill_signal_outcomes.delay(limit)
+    return {"task_id": task.id, "status": "dispatched"}

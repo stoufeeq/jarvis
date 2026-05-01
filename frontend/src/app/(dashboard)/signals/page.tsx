@@ -706,12 +706,12 @@ function PerformanceTab() {
 
   const backfill = useMutation({
     mutationFn: () => signalsApi.backfillOutcomes(),
-    onSuccess: (res) => {
-      const count = res.data?.backfilled ?? 0;
-      toast.success(`Backfilled ${count} signal outcomes`);
-      refetch();
+    onSuccess: () => {
+      toast.success("Backfill dispatched — refresh in a few minutes to see results");
+      // Refetch after delay to give the worker time to process
+      setTimeout(() => refetch(), 30_000);
     },
-    onError: () => toast.error("Backfill failed"),
+    onError: () => toast.error("Backfill dispatch failed"),
   });
 
   if (isLoading) {

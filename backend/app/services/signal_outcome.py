@@ -8,7 +8,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.signal import Signal
@@ -73,7 +73,6 @@ class SignalOutcomeService:
         for label, days in SNAPSHOT_INTERVALS.items():
             cutoff = now - timedelta(days=days)
             price_col = getattr(SignalOutcome, f"price_{label}")
-            snap_col  = getattr(SignalOutcome, f"snapshot_{label}_at")
 
             result = await self.db.execute(
                 select(SignalOutcome).where(
@@ -143,16 +142,17 @@ class SignalOutcomeService:
         for ticker, tsignals in by_ticker.items():
             try:
                 # Fetch 1 year of history — enough to backfill 90d snapshots
-                history = await mds.get_history(ticker, period="1y", interval="1d")
+                resp = await mds.get_history(ticker, period="1y", interval="1d")
+                candles = resp.get("candles", []) if isinstance(resp, dict) else []
             except Exception as exc:
                 log.warning("Backfill: failed to fetch history for %s: %s", ticker, exc)
                 continue
 
-            if not history:
+            if not candles:
                 continue
 
             # Index by date string for fast lookup
-            by_date = {self._candle_date(c): c for c in history}
+            by_date = {self._candle_date(c): c for c in candles}
 
             for sig in tsignals:
                 created_dt = sig.created_at or now
