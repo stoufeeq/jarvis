@@ -16,6 +16,7 @@ celery_app = Celery(
         "app.workers.tasks.insider_fetch",
         "app.workers.tasks.eightk_fetch",
         "app.workers.tasks.heatmap_warm",
+        "app.workers.tasks.signal_outcome",
     ],
 )
 
@@ -73,5 +74,11 @@ celery_app.conf.beat_schedule = {
     "warm-heatmap-cache": {
         "task": "app.workers.tasks.heatmap_warm.warm_heatmap_cache",
         "schedule": 1800,  # every 30 minutes
+    },
+    # Snapshot signal outcomes (1d/5d/30d/90d post-signal prices) once daily
+    # at 22:00 UTC — after US market close, prices have settled.
+    "snapshot-signal-outcomes": {
+        "task": "app.workers.tasks.signal_outcome.snapshot_signal_outcomes",
+        "schedule": crontab(hour=22, minute=0),
     },
 }

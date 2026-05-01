@@ -250,6 +250,43 @@ export interface BriefingMacroEvent {
   impact: string;
 }
 
+export interface SignalOutcome {
+  id: number;
+  signal_id: number | null;
+  ticker: string;
+  signal_type: "technical" | "insider" | "ai_news" | "options_flow" | "fundamental" | "earnings_upcoming" | "macro_event" | "cross_impact";
+  direction: "bullish" | "bearish" | "neutral";
+  strength: number;
+  rationale: string | null;
+  entry_price: number;
+  signal_created_at: string;
+  price_1d: number | null;
+  price_5d: number | null;
+  price_30d: number | null;
+  price_90d: number | null;
+  snapshot_1d_at: string | null;
+  snapshot_5d_at: string | null;
+  snapshot_30d_at: string | null;
+  snapshot_90d_at: string | null;
+}
+
+export interface PerformanceBucket {
+  hit_rate: number | null;
+  avg_gain_pct: number | null;
+  sample_size: number;
+}
+
+export type PerformanceTimeframe = "1d" | "5d" | "30d" | "90d";
+export type PerformanceByTimeframe = Record<PerformanceTimeframe, PerformanceBucket>;
+
+export interface SignalPerformance {
+  total_outcomes: number;
+  overall: PerformanceByTimeframe;
+  by_signal_type: Record<string, PerformanceByTimeframe>;
+  by_direction: Record<string, PerformanceByTimeframe>;
+  by_strength: Record<string, PerformanceByTimeframe>;
+}
+
 export interface BriefingSession {
   state: "open" | "pre_market" | "after_hours" | "closed_overnight" | "closed_weekend" | "closed_holiday";
   is_trading_day: boolean;

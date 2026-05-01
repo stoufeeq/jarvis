@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { signalsApi, marketApi } from "@/lib/api";
 import { formatCurrency } from "@/lib/utils";
-import type { Signal, OptionsFlowSummary, UnusualContract, UWFlowItem } from "@/types";
+import type { Signal, OptionsFlowSummary, UnusualContract, UWFlowItem, SignalPerformance, PerformanceTimeframe, PerformanceByTimeframe } from "@/types";
 import toast from "react-hot-toast";
 
 const SIGNAL_TYPE_LABEL: Record<string, string> = {
@@ -31,8 +31,14 @@ const SIGNAL_TYPE_STYLE: Record<string, string> = {
 
 const DIRECTIONS = ["", "bullish", "bearish", "neutral"] as const;
 const TYPES = ["", "technical", "insider", "ai_news", "options_flow", "fundamental", "earnings_upcoming", "macro_event", "cross_impact"] as const;
-const TABS = ["signals", "options_flow"] as const;
+const TABS = ["signals", "options_flow", "performance"] as const;
 type Tab = (typeof TABS)[number];
+
+const TAB_LABELS: Record<Tab, string> = {
+  signals: "Signals",
+  options_flow: "Options Flow",
+  performance: "Performance",
+};
 
 export default function SignalsPage() {
   const [activeTab, setActiveTab] = useState<Tab>("signals");
@@ -43,7 +49,7 @@ export default function SignalsPage() {
 
       {/* Tab bar */}
       <div className="flex gap-1 border-b border-border">
-        {(["signals", "options_flow"] as const).map((tab) => (
+        {TABS.map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -53,13 +59,14 @@ export default function SignalsPage() {
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
-            {tab === "signals" ? "Signals" : "Options Flow"}
+            {TAB_LABELS[tab]}
           </button>
         ))}
       </div>
 
       {activeTab === "signals" && <SignalsTab />}
       {activeTab === "options_flow" && <OptionsFlowTab />}
+      {activeTab === "performance" && <PerformanceTab />}
     </div>
   );
 }
@@ -683,5 +690,158 @@ function UWFlowTable({ items }: { items: UWFlowItem[] }) {
         </table>
       </div>
     </div>
+  );
+}
+
+/* ── Performance tab ──────────────────────────────────────────────────────── */
+
+const TIMEFRAMES: PerformanceTimeframe[] = ["1d", "5d", "30d", "90d"];
+
+function PerformanceTab() {
+  const { data, isLoading, error, refetch } = useQuery<SignalPerformance>({
+    queryKey: ["signals", "performance"],
+    queryFn: () => signalsApi.performance().then((r) => r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const backfill = useMutation({
+    mutationFn: () => signalsApi.backfillOutcomes(),
+    onSuccess: (res) => {
+      const count = res.data?.backfilled ?? 0;
+      toast.success(`Backfilled ${count} signal outcomes`);
+      refetch();
+    },
+    onError: () => toast.error("Backfill failed"),
+  });
+
+  if (isLoading) {
+    return <p className="text-sm text-muted-foreground">Loading performance data…</p>;
+  }
+  if (error || !data) {
+    return <p className="text-sm text-red-400">Failed to load performance data.</p>;
+  }
+  if (data.total_outcomes === 0) {
+    return (
+      <div className="rounded-lg border border-border bg-card p-6 space-y-3">
+        <p className="text-sm text-foreground">No tracked signal outcomes yet.</p>
+        <p className="text-xs text-muted-foreground">
+          New signals from this point onward will be tracked automatically. To
+          analyse signals already in the database, backfill them using historical
+          yfinance prices — this fetches one year of history per ticker and
+          computes entry + 1d/5d/30d/90d snapshots retroactively.
+        </p>
+        <button
+          onClick={() => backfill.mutate()}
+          disabled={backfill.isPending}
+          className="px-4 py-2 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 transition-opacity"
+        >
+          {backfill.isPending ? "Backfilling…" : "Backfill from existing signals"}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-lg border border-border bg-secondary/30 px-4 py-3">
+        <p className="text-sm text-foreground">
+          Tracking <span className="font-semibold">{data.total_outcomes}</span> signal outcomes.
+          Hit rate = % of signals where the price moved in the predicted direction.
+          Avg gain % is signed for direction (positive = predicted correctly).
+        </p>
+      </div>
+
+      <PerfSection title="Overall" data={{ "All": data.overall }} />
+      <PerfSection title="By Signal Type" data={data.by_signal_type} keyLabel={SIGNAL_TYPE_LABEL} />
+      <PerfSection title="By Direction" data={data.by_direction} />
+      <PerfSection title="By Strength" data={data.by_strength} />
+    </div>
+  );
+}
+
+function PerfSection({
+  title, data, keyLabel,
+}: {
+  title: string;
+  data: Record<string, PerformanceByTimeframe>;
+  keyLabel?: Record<string, string>;
+}) {
+  const keys = Object.keys(data);
+  if (keys.length === 0) return null;
+
+  return (
+    <div>
+      <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+        {title}
+      </h3>
+      <div className="overflow-x-auto rounded-lg border border-border bg-card">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border bg-secondary/30">
+              <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">{title.replace("By ", "")}</th>
+              {TIMEFRAMES.map((tf) => (
+                <th key={tf} className="px-4 py-2 text-center text-xs font-medium text-muted-foreground" colSpan={3}>
+                  {tf}
+                </th>
+              ))}
+            </tr>
+            <tr className="border-b border-border bg-secondary/20">
+              <th className="px-4 py-1.5"></th>
+              {TIMEFRAMES.map((tf) => (
+                <Sub3 key={tf} />
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {keys.map((k) => {
+              const row = data[k];
+              const label = keyLabel?.[k] ?? k;
+              return (
+                <tr key={k} className="border-b border-border/50 last:border-0">
+                  <td className="px-4 py-2 font-medium">{label}</td>
+                  {TIMEFRAMES.map((tf) => {
+                    const cell = row[tf];
+                    return (
+                      <PerfCells key={tf} cell={cell} />
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function Sub3() {
+  return (
+    <>
+      <th className="px-3 py-1.5 text-right text-[10px] font-normal text-muted-foreground/70">Hit %</th>
+      <th className="px-3 py-1.5 text-right text-[10px] font-normal text-muted-foreground/70">Avg %</th>
+      <th className="px-3 py-1.5 text-right text-[10px] font-normal text-muted-foreground/70">N</th>
+    </>
+  );
+}
+
+function PerfCells({ cell }: { cell: { hit_rate: number | null; avg_gain_pct: number | null; sample_size: number } | undefined }) {
+  if (!cell || cell.sample_size === 0) {
+    return (
+      <>
+        <td className="px-3 py-2 text-right text-muted-foreground/40">—</td>
+        <td className="px-3 py-2 text-right text-muted-foreground/40">—</td>
+        <td className="px-3 py-2 text-right text-muted-foreground/40">0</td>
+      </>
+    );
+  }
+  const hitColor = cell.hit_rate != null && cell.hit_rate >= 50 ? "text-emerald-400" : "text-red-400";
+  const gainColor = cell.avg_gain_pct != null && cell.avg_gain_pct >= 0 ? "text-emerald-400" : "text-red-400";
+  return (
+    <>
+      <td className={`px-3 py-2 text-right ${hitColor}`}>{cell.hit_rate?.toFixed(1)}%</td>
+      <td className={`px-3 py-2 text-right ${gainColor}`}>{(cell.avg_gain_pct ?? 0).toFixed(2)}%</td>
+      <td className="px-3 py-2 text-right text-muted-foreground">{cell.sample_size}</td>
+    </>
   );
 }

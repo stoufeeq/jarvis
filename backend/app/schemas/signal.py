@@ -21,3 +21,25 @@ class SignalRead(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class SignalOutcomeRead(BaseModel):
+    id: int
+    signal_id: int | None
+    ticker: str
+    signal_type: SignalType
+    direction: SignalDirection
+    strength: int
+    rationale: str | None
+    entry_price: float
+    signal_created_at: datetime
+    price_1d: float | None
+    price_5d: float | None
+    price_30d: float | None
+    price_90d: float | None
+    snapshot_1d_at: datetime | None
+    snapshot_5d_at: datetime | None
+    snapshot_30d_at: datetime | None
+    snapshot_90d_at: datetime | None
+
+    model_config = {"from_attributes": True}

@@ -110,6 +110,10 @@ export const signalsApi = {
   scan: (ticker: string, includeAi = false) =>
     api.post(`/signals/scan/${ticker}`, null, { params: { include_ai: includeAi } }),
   insider: (params?: object) => api.get("/signals/insider", { params }),
+  performance: () => api.get("/signals/performance"),
+  outcomes: (limit = 50) => api.get("/signals/outcomes", { params: { limit } }),
+  backfillOutcomes: (limit?: number) =>
+    api.post("/signals/outcomes/backfill", null, { params: limit ? { limit } : {} }),
 };
 
 export const advisorApi = {

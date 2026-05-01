@@ -6,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.insider_trade import InsiderTrade
 from app.models.signal import Signal, SignalDirection, SignalType
+from app.services.market_data import MarketDataService
+from app.services.signal_outcome import SignalOutcomeService
 from app.signals.ai_news import AINewsSignalProvider
 from app.signals.cross_impact import CrossImpactSignalProvider
 from app.signals.earnings import EarningsSignalProvider
@@ -43,6 +45,8 @@ class SignalEngine:
 
         Existing signals for this ticker are deleted first so the result
         always reflects the latest scan rather than accumulating stale rows.
+        Outcome rows (in `signal_outcomes`) are preserved across rescans —
+        their FK to signals is SET NULL on delete.
         """
         await self.db.execute(delete(Signal).where(Signal.ticker == ticker))
 
@@ -59,7 +63,26 @@ class SignalEngine:
                 log.warning("Signal provider %s failed for %s: %s", provider.name, ticker, exc)
 
         if all_signals:
-            await self.db.flush()
+            await self.db.flush()  # populate Signal.id and created_at
+
+            # Record an outcome row per signal (one quote fetch shared across all)
+            entry_price: float | None = None
+            try:
+                quotes = await MarketDataService().get_quotes([ticker])
+                if quotes and quotes[0].get("price"):
+                    entry_price = float(quotes[0]["price"])
+            except Exception as exc:
+                log.warning("Failed to fetch entry price for %s: %s", ticker, exc)
+
+            if entry_price and entry_price > 0:
+                outcome_svc = SignalOutcomeService(self.db)
+                for s in all_signals:
+                    try:
+                        await outcome_svc.record_entry(s, entry_price=entry_price)
+                    except Exception as exc:
+                        log.warning("Failed to record outcome for signal %s: %s", s.id, exc)
+                await self.db.flush()
+
         return all_signals
 
     async def get_signals(
