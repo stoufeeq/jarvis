@@ -9,6 +9,7 @@ from app.database import get_db
 from app.models.user import User
 from app.schemas.user import UserRead, UserUpdate
 from app.services.email import send_email
+from app.services.telegram import send_telegram
 from app.services.user import UserService
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -38,6 +39,26 @@ async def test_email(user: User = Depends(get_current_user)):
     if sent:
         return {"ok": True, "detail": f"Test email sent to {user.email}"}
     return {"ok": False, "detail": "SMTP send failed — check server logs for details"}
+
+
+@router.post("/me/test-telegram")
+async def test_telegram(user: User = Depends(get_current_user)):
+    """Send a test message to the user's configured Telegram chat."""
+    settings = get_settings()
+    if not settings.telegram_configured:
+        return {"ok": False, "detail": "Telegram bot not configured — set TELEGRAM_BOT_TOKEN in .env"}
+    if not user.telegram_chat_id:
+        return {"ok": False, "detail": "No Telegram chat ID set. Save your chat ID in Settings first."}
+    sent = await send_telegram(
+        chat_id=user.telegram_chat_id,
+        text=(
+            "✅ <b>Jarvis Telegram link working</b>\n"
+            "You will now receive triggered alerts and daily briefing summaries here."
+        ),
+    )
+    if sent:
+        return {"ok": True, "detail": f"Test message sent to chat {user.telegram_chat_id}"}
+    return {"ok": False, "detail": "Telegram send failed — check chat ID and bot token"}
 
 
 @router.patch("/me", response_model=UserRead)

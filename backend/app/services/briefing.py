@@ -167,6 +167,17 @@ class BriefingService:
         )
         self.db.add(briefing)
         await self.db.flush()
+
+        # Push briefing summary to user's Telegram if configured (fire-and-forget,
+        # any failure is logged but doesn't block the briefing from being saved).
+        if user.telegram_chat_id:
+            try:
+                from app.services.telegram import briefing_message, send_telegram
+                msg = briefing_message(str(today), sentiment, summary)
+                await send_telegram(user.telegram_chat_id, msg)
+            except Exception as exc:
+                log.warning("Telegram briefing send failed for user %s: %s", user.id, exc)
+
         return briefing
 
     @staticmethod

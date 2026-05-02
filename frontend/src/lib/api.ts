@@ -66,9 +66,10 @@ export const authApi = {
   register: (email: string, password: string, full_name?: string) =>
     api.post("/auth/register", { email, password, full_name }),
   me: () => api.get("/users/me"),
-  updateMe: (data: { full_name?: string; current_password?: string; password?: string }) =>
+  updateMe: (data: { full_name?: string; current_password?: string; password?: string; telegram_chat_id?: string }) =>
     api.patch("/users/me", data),
   testEmail: () => api.post("/users/me/test-email"),
+  testTelegram: () => api.post("/users/me/test-telegram"),
 };
 
 export const portfolioApi = {

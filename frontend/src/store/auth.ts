@@ -5,6 +5,7 @@ interface User {
   id: number;
   email: string;
   full_name: string | null;
+  telegram_chat_id?: string | null;
 }
 
 interface AuthState {

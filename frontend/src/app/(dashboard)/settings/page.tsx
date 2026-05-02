@@ -16,6 +16,9 @@ export default function SettingsPage() {
   // Profile form
   const [name, setName] = useState(user?.full_name ?? "");
 
+  // Telegram form
+  const [telegramChatId, setTelegramChatId] = useState(user?.telegram_chat_id ?? "");
+
   // Password form
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -37,6 +40,24 @@ export default function SettingsPage() {
       else toast.error(res.data.detail);
     },
     onError: () => toast.error("Test email request failed"),
+  });
+
+  const telegramMutation = useMutation({
+    mutationFn: () => authApi.updateMe({ telegram_chat_id: telegramChatId.trim() }),
+    onSuccess: (res) => {
+      setUser(res.data);
+      toast.success(telegramChatId.trim() ? "Telegram chat ID saved" : "Telegram chat ID cleared");
+    },
+    onError: () => toast.error("Failed to save Telegram chat ID"),
+  });
+
+  const testTelegramMutation = useMutation({
+    mutationFn: () => authApi.testTelegram(),
+    onSuccess: (res) => {
+      if (res.data.ok) toast.success(res.data.detail);
+      else toast.error(res.data.detail);
+    },
+    onError: () => toast.error("Test Telegram request failed"),
   });
 
   const passwordMutation = useMutation({
@@ -158,6 +179,59 @@ ALERT_FROM_EMAIL=you@gmail.com`}</pre>
         >
           {testEmailMutation.isPending ? "Sending…" : "Send test email"}
         </button>
+      </section>
+
+      {/* Telegram notifications */}
+      <section className="rounded-xl border border-border bg-card p-6 space-y-3">
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+          Telegram Notifications
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Push triggered alerts (with <strong>Telegram</strong> in their channels) and the
+          daily briefing summary to your Telegram chat with the Jarvis bot.
+        </p>
+        <div className="rounded-md bg-secondary/50 border border-border px-4 py-3 text-xs text-muted-foreground space-y-1.5">
+          <p className="font-medium text-foreground">How to set up</p>
+          <ol className="list-decimal list-inside space-y-1">
+            <li>Open Telegram and search for the Jarvis bot (the one whose token is set on the server).</li>
+            <li>Send <code className="bg-black/20 px-1 rounded">/start</code> to begin a conversation.</li>
+            <li>
+              Visit{" "}
+              <code className="bg-black/20 px-1 rounded">
+                https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates
+              </code>{" "}
+              in your browser to find your numeric chat ID
+              (or use a helper bot like <code>@userinfobot</code>).
+            </li>
+            <li>Paste the chat ID below and save, then send a test message.</li>
+          </ol>
+        </div>
+        <div>
+          <label className="block text-xs text-muted-foreground mb-1">Telegram chat ID</label>
+          <input
+            type="text"
+            value={telegramChatId}
+            onChange={(e) => setTelegramChatId(e.target.value)}
+            placeholder="e.g. 123456789"
+            className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={() => telegramMutation.mutate()}
+            disabled={telegramMutation.isPending || telegramChatId === (user?.telegram_chat_id ?? "")}
+            className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50"
+          >
+            {telegramMutation.isPending ? "Saving…" : "Save chat ID"}
+          </button>
+          <button
+            onClick={() => testTelegramMutation.mutate()}
+            disabled={testTelegramMutation.isPending || !user?.telegram_chat_id}
+            className="px-4 py-2 rounded-md bg-secondary text-sm font-medium hover:bg-secondary/80 disabled:opacity-50"
+          >
+            {testTelegramMutation.isPending ? "Sending…" : "Send test message"}
+          </button>
+        </div>
       </section>
 
       {/* Change password */}

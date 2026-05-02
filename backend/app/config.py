@@ -57,6 +57,13 @@ class Settings(BaseSettings):
     def email_configured(self) -> bool:
         return bool(self.smtp_host and self.smtp_user and self.smtp_password)
 
+    # Telegram bot — for push notifications (alerts, briefing summaries)
+    telegram_bot_token: str = ""
+
+    @property
+    def telegram_configured(self) -> bool:
+        return bool(self.telegram_bot_token)
+
     # Frontend
     frontend_url: str = "http://localhost:3000"
 

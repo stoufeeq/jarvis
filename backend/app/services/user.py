@@ -34,6 +34,9 @@ class UserService:
             user.full_name = payload.full_name
         if payload.password:
             user.password_hash = hash_password(payload.password)
+        if payload.telegram_chat_id is not None:
+            # Empty string clears the chat ID
+            user.telegram_chat_id = payload.telegram_chat_id.strip() or None
         await self.db.flush()
         await self.db.refresh(user)
         return user

@@ -128,6 +128,8 @@ export default function AlertsPage() {
               >
                 <option value="in_app">In-app only</option>
                 <option value="in_app,email">In-app + Email</option>
+                <option value="in_app,telegram">In-app + Telegram</option>
+                <option value="in_app,email,telegram">In-app + Email + Telegram</option>
               </select>
             </div>
           </div>

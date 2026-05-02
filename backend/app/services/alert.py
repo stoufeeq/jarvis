@@ -9,6 +9,8 @@ from app.models.alert import Alert, AlertType
 from app.models.user import User
 from app.schemas.alert import AlertCreate, AlertUpdate
 from app.services.email import alert_triggered_email, send_email
+from app.services.telegram import alert_message as telegram_alert_message
+from app.services.telegram import send_telegram
 from app.services.market_data import MarketDataService
 
 log = logging.getLogger(__name__)
@@ -139,5 +141,23 @@ class AlertService:
                     )
                     email_tasks.append(send_email(user.email, subject, html))
                 await asyncio.gather(*email_tasks, return_exceptions=True)
+
+            # Send Telegram messages for alerts that include "telegram" in channels.
+            # Skips silently if user.telegram_chat_id is unset or bot isn't configured.
+            telegram_alerts = [
+                a for a in newly_triggered
+                if "telegram" in (a.channels or "").lower()
+            ]
+            if telegram_alerts and user.telegram_chat_id:
+                tg_tasks = []
+                for alert in telegram_alerts:
+                    msg = telegram_alert_message(
+                        ticker=alert.ticker,
+                        alert_type=alert.alert_type.value,
+                        threshold=float(alert.threshold_value) if alert.threshold_value else None,
+                        price=prices.get(alert.ticker),
+                    )
+                    tg_tasks.append(send_telegram(user.telegram_chat_id, msg))
+                await asyncio.gather(*tg_tasks, return_exceptions=True)
 
         return newly_triggered
