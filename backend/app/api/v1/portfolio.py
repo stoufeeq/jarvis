@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +8,7 @@ from app.database import get_db
 from app.models.portfolio import Trade
 from app.models.user import User
 from app.schemas.portfolio import (
+    PaperTradeRequest,
     PortfolioCreate,
     PortfolioRead,
     PortfolioSummary,
@@ -43,7 +44,35 @@ async def create_portfolio(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await PortfolioService(db).create(user.id, payload)
+    try:
+        return await PortfolioService(db).create(user.id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/{portfolio_id}/paper-trade", response_model=TradeRead, status_code=201)
+async def execute_paper_trade(
+    portfolio_id: int,
+    payload: PaperTradeRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Execute a market-order paper trade (buy or sell) at the current quote.
+    Validates cash for buys, shares for sells. Updates the virtual cash balance."""
+    svc = PortfolioService(db)
+    p = await svc.get(portfolio_id)
+    if not p:
+        raise NotFoundError("Portfolio not found")
+    _assert_owner(p, user)
+    try:
+        return await svc.execute_paper_trade(
+            portfolio=p,
+            ticker=payload.ticker,
+            action=payload.action,
+            quantity=payload.quantity,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/{portfolio_id}", response_model=PortfolioSummary)

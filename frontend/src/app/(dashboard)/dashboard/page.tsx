@@ -9,6 +9,7 @@ import { useCurrencyDisplay } from "@/hooks/useCurrencyDisplay";
 import { CurrencySwitcher } from "@/components/ui/CurrencySwitcher";
 import { PrivacyToggle } from "@/components/ui/PrivacyToggle";
 import { usePrivacyStore } from "@/store/privacy";
+import { useTradingModeStore } from "@/store/tradingMode";
 import type { Portfolio, Position, Signal, Quote, LiquidityResponse, Briefing } from "@/types";
 import Link from "next/link";
 import { AnimatedNumber } from "@/components/ui/AnimatedNumber";
@@ -19,11 +20,22 @@ const MAX_MOVERS = 49;
 const MASK = "••••••";
 
 export default function DashboardPage() {
-  const { data: portfolios = [] } = useQuery<Portfolio[]>({
+  const tradingMode = useTradingModeStore((s) => s.mode);
+  const isPaper = tradingMode === "paper";
+
+  const { data: allPortfolios = [] } = useQuery<Portfolio[]>({
     queryKey: ["portfolios"],
     queryFn: () => portfolioApi.list().then((r) => r.data),
     staleTime: 60_000,
   });
+
+  // Filter portfolios by current trading mode — never combined.
+  const portfolios = useMemo(
+    () => allPortfolios.filter((p) =>
+      isPaper ? p.broker === "paper" : p.broker !== "paper"
+    ),
+    [allPortfolios, isPaper]
+  );
 
   // Fetch positions for all active portfolios to recompute live totals
   const portfolioIds = useMemo(
@@ -138,7 +150,12 @@ export default function DashboardPage() {
 
   const portfolioValue = liveTotals?.totalValue
     ?? portfolios.reduce((s, p) => s + toUsd(p.total_value ?? 0, p.currency || "USD"), 0);
-  const liquidityUsd = liquidity?.total_usd ?? 0;
+  // In paper mode, "Cash" comes from the paper portfolio's virtual cash_balance,
+  // not from real cash accounts.
+  const paperCashUsd = isPaper
+    ? portfolios.reduce((s, p) => s + toUsd(p.cash_balance ?? 0, p.currency || "USD"), 0)
+    : 0;
+  const liquidityUsd = isPaper ? paperCashUsd : (liquidity?.total_usd ?? 0);
   const totalValue = portfolioValue + liquidityUsd;
   const totalPnl = liveTotals?.totalPnl
     ?? portfolios.reduce((s, p) => s + toUsd(p.total_pnl ?? 0, p.currency || "USD"), 0);
@@ -181,10 +198,10 @@ export default function DashboardPage() {
           note={isPrivate ? undefined : currencyLabel(displayCurrency)}
         />
         <StatCard
-          label="Liquidity"
+          label={isPaper ? "Virtual Cash" : "Liquidity"}
           value={mv(formatCurrency(convert(liquidityUsd), displayCurrency))}
           note={isPrivate ? undefined : currencyLabel(displayCurrency)}
-          valueClass="text-sky-400"
+          valueClass={isPaper ? "text-amber-500" : "text-sky-400"}
         />
         <StatCard
           label="Unrealized P&L"

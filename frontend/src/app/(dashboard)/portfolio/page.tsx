@@ -10,6 +10,7 @@ import { PrivacyToggle } from "@/components/ui/PrivacyToggle";
 import { InlineChart } from "@/components/charts/InlineChart";
 import { AnimatedNumber } from "@/components/ui/AnimatedNumber";
 import { usePrivacyStore } from "@/store/privacy";
+import { useTradingModeStore } from "@/store/tradingMode";
 import type { Portfolio, Position, Trade, Quote } from "@/types";
 import toast from "react-hot-toast";
 
@@ -66,19 +67,34 @@ export default function PortfolioPage() {
   const [showAddTrade, setShowAddTrade] = useState(false);
   const [tradeForm, setTradeForm] = useState({ ...EMPTY_TRADE });
 
+  // Quick paper trade widget state
+  const [paperTicker, setPaperTicker] = useState("");
+  const [paperQty, setPaperQty] = useState("");
+
   // Edit trade state
   const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
   const [editForm, setEditForm] = useState({ ...EMPTY_TRADE });
 
-  const { data: portfolios = [], isLoading } = useQuery<Portfolio[]>({
+  const tradingMode = useTradingModeStore((s) => s.mode);
+
+  const { data: allPortfolios = [], isLoading } = useQuery<Portfolio[]>({
     queryKey: ["portfolios"],
     queryFn: () => portfolioApi.list().then((r) => r.data),
     staleTime: 60_000,
   });
 
+  // Filter portfolios by current trading mode — never combined.
+  const portfolios = useMemo(
+    () => allPortfolios.filter((p) =>
+      tradingMode === "paper" ? p.broker === "paper" : p.broker !== "paper"
+    ),
+    [allPortfolios, tradingMode]
+  );
+
   // Derive summary from the already-fetched list — avoids a second get_summary()
   // call with potentially different prices causing P&L to differ from the dashboard.
   const summary = portfolios.find((p) => p.id === selectedId);
+  const isPaper = tradingMode === "paper";
 
   const { data: positions = [] } = useQuery<Position[]>({
     queryKey: ["positions", selectedId],
@@ -163,6 +179,53 @@ export default function PortfolioPage() {
     },
   });
 
+  // State for paper portfolio creation (only used when in paper mode and none exists)
+  const [paperInitialCash, setPaperInitialCash] = useState("100000");
+
+  const createPaperMutation = useMutation({
+    mutationFn: () => portfolioApi.create({
+      name: "Paper Trading",
+      broker: "paper",
+      currency: "USD",
+      initial_cash: parseFloat(paperInitialCash) || 100000,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["portfolios"] });
+      toast.success("Paper portfolio created — start trading!");
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        ?? "Failed to create paper portfolio";
+      toast.error(msg);
+    },
+  });
+
+  const paperTradeMutation = useMutation({
+    mutationFn: (data: { ticker: string; action: "buy" | "sell"; quantity: number }) =>
+      portfolioApi.paperTrade(selectedId!, data),
+    onSuccess: (_, vars) => {
+      invalidateAll();
+      setPaperTicker("");
+      setPaperQty("");
+      toast.success(`Paper ${vars.action.toUpperCase()} ${vars.quantity} ${vars.ticker.toUpperCase()} executed`);
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        ?? "Paper trade failed";
+      toast.error(msg);
+    },
+  });
+
+  function submitPaperTrade(action: "buy" | "sell") {
+    const ticker = paperTicker.trim().toUpperCase();
+    const qty = parseFloat(paperQty);
+    if (!ticker || !qty || qty <= 0) {
+      toast.error("Enter a ticker and a positive quantity");
+      return;
+    }
+    paperTradeMutation.mutate({ ticker, action, quantity: qty });
+  }
+
   const addTradeMutation = useMutation({
     mutationFn: (data: object) => portfolioApi.addTrade(selectedId!, data),
     onSuccess: () => {
@@ -200,7 +263,14 @@ export default function PortfolioPage() {
     qc.invalidateQueries({ queryKey: ["trades", selectedId] });
   }
 
-  if (!selectedId && portfolios.length > 0) setSelectedId(portfolios[0].id);
+  // Auto-select first available portfolio in current mode; clear selection when
+  // switching modes if the previously selected portfolio is no longer visible.
+  const visibleIds = portfolios.map((p) => p.id);
+  if (selectedId !== null && !visibleIds.includes(selectedId)) {
+    setSelectedId(portfolios.length > 0 ? portfolios[0].id : null);
+  } else if (!selectedId && portfolios.length > 0) {
+    setSelectedId(portfolios[0].id);
+  }
 
   function handleSortCol(col: SortKey) {
     setSort(([c, d]) => [col, c === col && d === "asc" ? "desc" : "asc"]);
@@ -449,7 +519,7 @@ export default function PortfolioPage() {
 
       {isLoading && <p className="text-muted-foreground text-sm">Loading…</p>}
 
-      {portfolios.length === 0 && !isLoading && (
+      {portfolios.length === 0 && !isLoading && !isPaper && (
         <div className="rounded-xl border border-border bg-card p-8 text-center">
           <p className="text-muted-foreground">No portfolios yet.</p>
           <button
@@ -458,6 +528,36 @@ export default function PortfolioPage() {
           >
             Create your first portfolio
           </button>
+        </div>
+      )}
+
+      {portfolios.length === 0 && !isLoading && isPaper && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-8 space-y-4">
+          <div>
+            <p className="text-foreground font-medium">No paper trading portfolio yet</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              Create one to start executing virtual trades on signals. Your real
+              portfolios are completely unaffected.
+            </p>
+          </div>
+          <div className="flex items-end gap-3">
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Initial cash (USD)</label>
+              <input
+                type="number"
+                value={paperInitialCash}
+                onChange={(e) => setPaperInitialCash(e.target.value)}
+                className="px-3 py-2 rounded-md border border-border bg-input text-sm w-40"
+              />
+            </div>
+            <button
+              onClick={() => createPaperMutation.mutate()}
+              disabled={createPaperMutation.isPending}
+              className="px-4 py-2 rounded-md bg-amber-500 text-amber-950 text-sm font-medium disabled:opacity-50"
+            >
+              {createPaperMutation.isPending ? "Creating…" : "Create Paper Portfolio"}
+            </button>
+          </div>
         </div>
       )}
 
@@ -538,6 +638,61 @@ export default function PortfolioPage() {
               />
             </div>
           </div>
+
+          {/* Paper trading: cash balance + quick trade widget */}
+          {isPaper && summary && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+                <p className="text-xs text-amber-500 uppercase tracking-wider font-medium">Virtual Cash</p>
+                <p className="text-2xl font-bold mt-1">
+                  {mv(formatCurrency(summary.cash_balance ?? 0, "USD"))}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  of {formatCurrency(summary.initial_cash ?? 0, "USD")} initial
+                </p>
+              </div>
+              <div className="md:col-span-2 rounded-xl border border-border bg-card p-4">
+                <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium mb-3">Quick Trade</p>
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="flex-1 min-w-[120px]">
+                    <label className="block text-xs text-muted-foreground mb-1">Ticker</label>
+                    <input
+                      type="text"
+                      value={paperTicker}
+                      onChange={(e) => setPaperTicker(e.target.value.toUpperCase())}
+                      placeholder="AAPL"
+                      className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm uppercase"
+                    />
+                  </div>
+                  <div className="flex-1 min-w-[100px]">
+                    <label className="block text-xs text-muted-foreground mb-1">Quantity</label>
+                    <input
+                      type="number"
+                      value={paperQty}
+                      onChange={(e) => setPaperQty(e.target.value)}
+                      placeholder="10"
+                      className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm"
+                    />
+                  </div>
+                  <button
+                    onClick={() => submitPaperTrade("buy")}
+                    disabled={paperTradeMutation.isPending}
+                    className="px-4 py-2 rounded-md bg-emerald-500 text-emerald-950 text-sm font-medium disabled:opacity-50"
+                  >
+                    Buy
+                  </button>
+                  <button
+                    onClick={() => submitPaperTrade("sell")}
+                    disabled={paperTradeMutation.isPending}
+                    className="px-4 py-2 rounded-md bg-red-500 text-red-50 text-sm font-medium disabled:opacity-50"
+                  >
+                    Sell
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">Market order at the current quote price.</p>
+              </div>
+            </div>
+          )}
 
           {/* Positions / Trades tabs */}
           <div className="flex gap-1 border-b border-border">

@@ -10,6 +10,8 @@ class PortfolioCreate(BaseModel):
     description: str | None = None
     broker: BrokerType = BrokerType.manual
     currency: str = "USD"
+    # Required when broker = 'paper'. Defaults to $100k if not provided.
+    initial_cash: float | None = None
 
 
 class PortfolioUpdate(BaseModel):
@@ -28,6 +30,8 @@ class PortfolioRead(BaseModel):
     currency: str
     is_active: bool
     created_at: datetime
+    initial_cash: float | None = None
+    cash_balance: float | None = None
 
     model_config = {"from_attributes": True}
 
@@ -41,6 +45,13 @@ class PortfolioSummary(PortfolioRead):
     day_change: float | None = None      # today's $ change across all positions
     day_change_pct: float | None = None  # today's % change vs yesterday's close
     position_count: int = 0
+
+
+class PaperTradeRequest(BaseModel):
+    """Request body for executing a paper trade."""
+    ticker: str
+    action: TradeAction  # buy or sell
+    quantity: float
 
 
 class PositionRead(BaseModel):

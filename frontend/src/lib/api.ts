@@ -84,6 +84,8 @@ export const portfolioApi = {
     api.patch(`/portfolios/${id}/trades/${tradeId}`, data),
   deleteTrade: (id: number, tradeId: number) =>
     api.delete(`/portfolios/${id}/trades/${tradeId}`),
+  paperTrade: (id: number, data: { ticker: string; action: "buy" | "sell"; quantity: number }) =>
+    api.post(`/portfolios/${id}/paper-trade`, data),
   importCsv: (id: number, file: File) => {
     const form = new FormData();
     form.append("file", file);

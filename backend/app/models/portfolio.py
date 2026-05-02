@@ -11,6 +11,7 @@ from app.models.base import TimestampMixin
 class BrokerType(str, enum.Enum):
     manual = "manual"
     ibkr = "ibkr"
+    paper = "paper"  # System-managed paper trading portfolio (virtual cash)
 
 
 class AssetType(str, enum.Enum):
@@ -41,6 +42,10 @@ class Portfolio(TimestampMixin, Base):
     )
     currency: Mapped[str] = mapped_column(String(3), default="USD")
     is_active: Mapped[bool] = mapped_column(default=True)
+
+    # Paper trading: virtual cash. Both null for manual/ibkr portfolios.
+    initial_cash: Mapped[float | None] = mapped_column(Numeric(18, 4))
+    cash_balance: Mapped[float | None] = mapped_column(Numeric(18, 4))
 
     user: Mapped["User"] = relationship(back_populates="portfolios")  # noqa: F821
     positions: Mapped[list["Position"]] = relationship(

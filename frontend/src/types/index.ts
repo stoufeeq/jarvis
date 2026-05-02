@@ -3,7 +3,7 @@ export interface Portfolio {
   user_id: number;
   name: string;
   description: string | null;
-  broker: "manual" | "ibkr";
+  broker: "manual" | "ibkr" | "paper";
   currency: string;
   is_active: boolean;
   created_at: string;
@@ -14,6 +14,8 @@ export interface Portfolio {
   day_change?: number;
   day_change_pct?: number;
   position_count?: number;
+  initial_cash?: number | null;
+  cash_balance?: number | null;
 }
 
 export interface Position {

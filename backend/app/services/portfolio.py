@@ -6,7 +6,9 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.portfolio import AssetType, Portfolio, Position, Trade, TradeAction
+from decimal import Decimal
+
+from app.models.portfolio import AssetType, BrokerType, Portfolio, Position, Trade, TradeAction
 from app.schemas.portfolio import (
     PortfolioCreate,
     PortfolioSummary,
@@ -32,7 +34,32 @@ class PortfolioService:
         return list(result.scalars().all())
 
     async def create(self, user_id: int, payload: PortfolioCreate) -> Portfolio:
-        p = Portfolio(user_id=user_id, **payload.model_dump())
+        # For paper portfolios: enforce single per user, default cash to $100k
+        if payload.broker == BrokerType.paper:
+            existing = await self.db.execute(
+                select(Portfolio).where(
+                    Portfolio.user_id == user_id,
+                    Portfolio.broker == BrokerType.paper,
+                    Portfolio.is_active.is_(True),
+                )
+            )
+            if existing.scalar_one_or_none() is not None:
+                raise ValueError("A paper portfolio already exists for this user")
+
+            initial = payload.initial_cash if payload.initial_cash and payload.initial_cash > 0 else 100_000.0
+            p = Portfolio(
+                user_id=user_id,
+                name=payload.name,
+                description=payload.description,
+                broker=BrokerType.paper,
+                currency=payload.currency,
+                initial_cash=Decimal(str(initial)),
+                cash_balance=Decimal(str(initial)),
+            )
+        else:
+            data = payload.model_dump(exclude={"initial_cash"})
+            p = Portfolio(user_id=user_id, **data)
+
         self.db.add(p)
         await self.db.flush()
         await self.db.refresh(p)
@@ -83,6 +110,87 @@ class PortfolioService:
         self.db.add(trade)
         await self.db.flush()
         await self._update_position(portfolio_id, trade)
+        await self.db.refresh(trade)
+        return trade
+
+    async def execute_paper_trade(
+        self,
+        portfolio: Portfolio,
+        ticker: str,
+        action: TradeAction,
+        quantity: float,
+    ) -> Trade:
+        """Execute a paper trade against the user's virtual cash balance.
+
+        - Validates the portfolio is a paper portfolio
+        - Fetches the current quote (used as fill price)
+        - Validates sufficient cash for buys, sufficient shares for sells
+        - Creates a Trade row, updates the Position, updates cash_balance
+        """
+        if portfolio.broker != BrokerType.paper:
+            raise ValueError("Paper trades can only be executed on paper portfolios")
+        if action not in (TradeAction.buy, TradeAction.sell):
+            raise ValueError("Paper trades support only 'buy' or 'sell'")
+        if quantity <= 0:
+            raise ValueError("Quantity must be positive")
+
+        ticker = ticker.upper().strip()
+
+        # Fetch fill price
+        quotes = await MarketDataService().get_quotes([ticker])
+        if not quotes or not quotes[0].get("price"):
+            raise ValueError(f"Could not fetch quote for {ticker}")
+        price = float(quotes[0]["price"])
+        if price <= 0 or not math.isfinite(price):
+            raise ValueError(f"Invalid quote price for {ticker}: {price}")
+
+        cost = price * quantity
+        cash = float(portfolio.cash_balance or 0)
+
+        if action == TradeAction.buy:
+            if cost > cash:
+                raise ValueError(
+                    f"Insufficient cash: trade requires ${cost:,.2f} but only ${cash:,.2f} available"
+                )
+            new_cash = cash - cost
+        else:  # sell
+            # Verify the user holds enough shares
+            pos_result = await self.db.execute(
+                select(Position).where(
+                    Position.portfolio_id == portfolio.id,
+                    Position.ticker == ticker,
+                )
+            )
+            existing_pos = pos_result.scalar_one_or_none()
+            if existing_pos is None or float(existing_pos.quantity) < quantity:
+                held = float(existing_pos.quantity) if existing_pos else 0
+                raise ValueError(
+                    f"Insufficient shares: trying to sell {quantity} but only {held} held"
+                )
+            new_cash = cash + cost
+
+        # Create the Trade row (immutable ledger)
+        trade = Trade(
+            portfolio_id=portfolio.id,
+            ticker=ticker,
+            asset_type=AssetType.stock,
+            action=action,
+            quantity=Decimal(str(quantity)),
+            price=Decimal(str(price)),
+            fees=Decimal("0"),
+            currency=portfolio.currency or "USD",
+            traded_at=datetime.now(timezone.utc),
+            notes="Paper trade",
+        )
+        self.db.add(trade)
+        await self.db.flush()
+
+        # Update or create the position
+        await self._update_position(portfolio.id, trade)
+
+        # Update virtual cash balance
+        portfolio.cash_balance = Decimal(str(new_cash))
+        await self.db.flush()
         await self.db.refresh(trade)
         return trade
 
