@@ -964,11 +964,15 @@ function BacktestTab() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-lg border border-border bg-secondary/30 px-4 py-3">
+      <div className="rounded-lg border border-border bg-secondary/30 px-4 py-3 space-y-1">
         <p className="text-sm text-foreground">
-          Simulate a strategy over your tracked <span className="font-semibold">signal_outcomes</span>:
-          {" "}filter by criteria, hold each trade for N days at a fixed capital amount,
+          Simulate a hypothetical strategy over previously generated signals.
+          Filter by criteria, hold each simulated entry for N days at a fixed capital amount,
           and compare cumulative P&L against a SPY buy-and-hold benchmark.
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Pure simulation — no real or paper trades are executed. Uses entry price at signal
+          generation and the price snapshot N days later from the signal_outcomes table.
         </p>
       </div>
 
@@ -1069,7 +1073,7 @@ function BacktestResultsView({ result }: { result: BacktestResult }) {
     return (
       <div className="rounded-lg border border-border bg-card p-6">
         <p className="text-sm text-foreground">
-          No trades match the strategy. Try lowering min strength, removing the
+          No signals match this strategy. Try lowering min strength, removing the
           ticker filter, or shortening the hold period.
         </p>
       </div>
@@ -1083,9 +1087,9 @@ function BacktestResultsView({ result }: { result: BacktestResult }) {
       {/* Headline metrics */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <MetricCard
-          label="Total return"
+          label="Simulated return"
           value={`${m.total_return_pct >= 0 ? "+" : ""}${m.total_return_pct.toFixed(2)}%`}
-          subValue={`$${m.total_pnl.toLocaleString()} on ${m.n_trades} trades`}
+          subValue={`$${m.total_pnl.toLocaleString()} across ${m.n_trades} signals`}
           color={m.total_return_pct >= 0 ? "emerald" : "red"}
         />
         <MetricCard
@@ -1109,13 +1113,14 @@ function BacktestResultsView({ result }: { result: BacktestResult }) {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Period: {m.first_date} → {m.last_exit_date}. Avg trade P&L: ${m.avg_trade_pnl.toLocaleString()}.
+        Period: {m.first_date} → {m.last_exit_date}. Avg simulated P&L per signal: ${m.avg_trade_pnl.toLocaleString()}.
+        These are simulated entries — no real or paper trades were executed.
       </p>
 
       {/* Equity curve */}
       <div className="rounded-lg border border-border bg-card p-4">
         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-          Cumulative P&L over time
+          Cumulative simulated P&L over time
         </p>
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
@@ -1127,7 +1132,7 @@ function BacktestResultsView({ result }: { result: BacktestResult }) {
               <RechartsTooltip
                 contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 6 }}
                 labelStyle={{ color: "#f1f5f9" }}
-                formatter={(value: number) => [`$${value.toFixed(2)}`, "Cumulative P&L"]}
+                formatter={(value: number) => [`$${value.toFixed(2)}`, "Cumulative sim P&L"]}
               />
               <Line
                 type="monotone"
@@ -1141,20 +1146,23 @@ function BacktestResultsView({ result }: { result: BacktestResult }) {
         </div>
       </div>
 
-      {/* Recent trades */}
+      {/* Recent simulated entries */}
       <div>
-        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-          Last 10 trades in this strategy
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">
+          Last 10 signals in this simulation
+        </p>
+        <p className="text-xs text-muted-foreground/70 mb-3">
+          Hypothetical entries based on the strategy filter. No actual or paper trades were placed.
         </p>
         <div className="overflow-x-auto rounded-lg border border-border bg-card">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-secondary/30">
-                <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Date</th>
+                <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Signal date</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Ticker</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Type</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Dir</th>
-                <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Trade P&L</th>
+                <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Sim P&L</th>
                 <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Cum P&L</th>
               </tr>
             </thead>
