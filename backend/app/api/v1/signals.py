@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -7,10 +8,20 @@ from app.models.signal import SignalDirection, SignalType
 from app.models.user import User
 from app.schemas.signal import SignalOutcomeRead, SignalRead
 from app.schemas.insider_trade import InsiderTradeRead
+from app.services.backtest import BacktestService
 from app.services.signal_engine import SignalEngine
 from app.services.signal_outcome import SignalOutcomeService
 
 router = APIRouter(prefix="/signals", tags=["signals"])
+
+
+class BacktestRequest(BaseModel):
+    signal_type: SignalType | None = None
+    direction: SignalDirection | None = None
+    min_strength: int = Field(default=1, ge=1, le=5)
+    hold_period: str = Field(default="5d", pattern="^(1d|5d|30d|90d)$")
+    capital_per_trade: float = Field(default=1000.0, gt=0)
+    ticker: str | None = None
 
 
 @router.get("/", response_model=list[SignalRead])
@@ -71,6 +82,24 @@ async def get_recent_outcomes(
 ):
     """Recent tracked signal outcomes (raw rows, newest first)."""
     return await SignalOutcomeService(db).list_recent(limit=limit)
+
+
+@router.post("/backtest")
+async def run_backtest(
+    payload: BacktestRequest,
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Simulate a strategy over the existing signal_outcomes data.
+    Returns metrics, equity curve, and SPY benchmark comparison."""
+    return await BacktestService(db).simulate(
+        signal_type=payload.signal_type,
+        direction=payload.direction,
+        min_strength=payload.min_strength,
+        hold_period=payload.hold_period,
+        capital_per_trade=payload.capital_per_trade,
+        ticker=payload.ticker,
+    )
 
 
 @router.post("/outcomes/backfill", status_code=202)

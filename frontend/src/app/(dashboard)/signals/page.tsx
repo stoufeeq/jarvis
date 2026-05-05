@@ -4,9 +4,10 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { signalsApi, marketApi, portfolioApi } from "@/lib/api";
 import { formatCurrency } from "@/lib/utils";
-import type { Portfolio, Signal, OptionsFlowSummary, UnusualContract, UWFlowItem, SignalPerformance, PerformanceTimeframe, PerformanceByTimeframe } from "@/types";
+import type { Portfolio, Signal, OptionsFlowSummary, UnusualContract, UWFlowItem, SignalPerformance, PerformanceTimeframe, PerformanceByTimeframe, BacktestResult } from "@/types";
 import { useTradingModeStore } from "@/store/tradingMode";
 import toast from "react-hot-toast";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 
 const SIGNAL_TYPE_LABEL: Record<string, string> = {
   technical:         "Technical",
@@ -32,13 +33,14 @@ const SIGNAL_TYPE_STYLE: Record<string, string> = {
 
 const DIRECTIONS = ["", "bullish", "bearish", "neutral"] as const;
 const TYPES = ["", "technical", "insider", "ai_news", "options_flow", "fundamental", "earnings_upcoming", "macro_event", "cross_impact"] as const;
-const TABS = ["signals", "options_flow", "performance"] as const;
+const TABS = ["signals", "options_flow", "performance", "backtest"] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
   signals: "Signals",
   options_flow: "Options Flow",
   performance: "Performance",
+  backtest: "Backtest",
 };
 
 export default function SignalsPage() {
@@ -68,6 +70,7 @@ export default function SignalsPage() {
       {activeTab === "signals" && <SignalsTab />}
       {activeTab === "options_flow" && <OptionsFlowTab />}
       {activeTab === "performance" && <PerformanceTab />}
+      {activeTab === "backtest" && <BacktestTab />}
     </div>
   );
 }
@@ -932,5 +935,266 @@ function PerfCells({ cell }: { cell: { hit_rate: number | null; avg_gain_pct: nu
       <td className={`px-3 py-2 text-right ${gainColor}`}>{(cell.avg_gain_pct ?? 0).toFixed(2)}%</td>
       <td className="px-3 py-2 text-right text-muted-foreground">{cell.sample_size}</td>
     </>
+  );
+}
+
+/* ── Backtest tab ─────────────────────────────────────────────────────────── */
+
+function BacktestTab() {
+  const [signalType, setSignalType] = useState("");
+  const [direction, setDirection] = useState("");
+  const [minStrength, setMinStrength] = useState(3);
+  const [holdPeriod, setHoldPeriod] = useState("5d");
+  const [capitalPerTrade, setCapitalPerTrade] = useState(1000);
+  const [tickerFilter, setTickerFilter] = useState("");
+  const [result, setResult] = useState<BacktestResult | null>(null);
+
+  const runMutation = useMutation({
+    mutationFn: () => signalsApi.backtest({
+      signal_type: signalType || null,
+      direction: direction || null,
+      min_strength: minStrength,
+      hold_period: holdPeriod,
+      capital_per_trade: capitalPerTrade,
+      ticker: tickerFilter.trim() || null,
+    }),
+    onSuccess: (res) => setResult(res.data),
+    onError: () => toast.error("Backtest failed"),
+  });
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-lg border border-border bg-secondary/30 px-4 py-3">
+        <p className="text-sm text-foreground">
+          Simulate a strategy over your tracked <span className="font-semibold">signal_outcomes</span>:
+          {" "}filter by criteria, hold each trade for N days at a fixed capital amount,
+          and compare cumulative P&L against a SPY buy-and-hold benchmark.
+        </p>
+      </div>
+
+      {/* Strategy form */}
+      <div className="rounded-lg border border-border bg-card p-4 space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Signal type</label>
+            <select
+              value={signalType}
+              onChange={(e) => setSignalType(e.target.value)}
+              className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm"
+            >
+              <option value="">All</option>
+              {TYPES.filter((t) => t).map((t) => (
+                <option key={t} value={t}>{SIGNAL_TYPE_LABEL[t] ?? t}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Direction</label>
+            <select
+              value={direction}
+              onChange={(e) => setDirection(e.target.value)}
+              className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm"
+            >
+              <option value="">All</option>
+              <option value="bullish">Bullish (long)</option>
+              <option value="bearish">Bearish (short)</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Min strength</label>
+            <select
+              value={minStrength}
+              onChange={(e) => setMinStrength(parseInt(e.target.value))}
+              className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm"
+            >
+              {[1, 2, 3, 4, 5].map((s) => <option key={s} value={s}>{s}+ stars</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Hold period</label>
+            <select
+              value={holdPeriod}
+              onChange={(e) => setHoldPeriod(e.target.value)}
+              className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm"
+            >
+              <option value="1d">1 day</option>
+              <option value="5d">5 days</option>
+              <option value="30d">30 days</option>
+              <option value="90d">90 days</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Capital per trade ($)</label>
+            <input
+              type="number"
+              value={capitalPerTrade}
+              onChange={(e) => setCapitalPerTrade(parseFloat(e.target.value) || 1000)}
+              className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm"
+              min="0"
+              step="100"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Ticker (optional)</label>
+            <input
+              type="text"
+              value={tickerFilter}
+              onChange={(e) => setTickerFilter(e.target.value.toUpperCase())}
+              placeholder="e.g. AAPL"
+              className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm uppercase"
+            />
+          </div>
+        </div>
+
+        <button
+          onClick={() => runMutation.mutate()}
+          disabled={runMutation.isPending}
+          className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50"
+        >
+          {runMutation.isPending ? "Running…" : "Run backtest"}
+        </button>
+      </div>
+
+      {/* Results */}
+      {result && <BacktestResultsView result={result} />}
+    </div>
+  );
+}
+
+function BacktestResultsView({ result }: { result: BacktestResult }) {
+  const m = result.metrics;
+  const bm = result.benchmark;
+
+  if (m.n_trades === 0) {
+    return (
+      <div className="rounded-lg border border-border bg-card p-6">
+        <p className="text-sm text-foreground">
+          No trades match the strategy. Try lowering min strength, removing the
+          ticker filter, or shortening the hold period.
+        </p>
+      </div>
+    );
+  }
+
+  const beatsBenchmark = bm.return_pct != null && m.total_return_pct > bm.return_pct;
+
+  return (
+    <div className="space-y-6">
+      {/* Headline metrics */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <MetricCard
+          label="Total return"
+          value={`${m.total_return_pct >= 0 ? "+" : ""}${m.total_return_pct.toFixed(2)}%`}
+          subValue={`$${m.total_pnl.toLocaleString()} on ${m.n_trades} trades`}
+          color={m.total_return_pct >= 0 ? "emerald" : "red"}
+        />
+        <MetricCard
+          label="vs SPY benchmark"
+          value={bm.return_pct != null ? `${bm.return_pct >= 0 ? "+" : ""}${bm.return_pct.toFixed(2)}%` : "n/a"}
+          subValue={beatsBenchmark ? "Strategy beats SPY ✓" : (bm.return_pct != null ? "SPY beats strategy" : "")}
+          color={beatsBenchmark ? "emerald" : "muted"}
+        />
+        <MetricCard
+          label="Hit rate"
+          value={`${m.hit_rate_pct.toFixed(1)}%`}
+          subValue={`${m.wins} wins / ${m.losses} losses`}
+          color={m.hit_rate_pct >= 50 ? "emerald" : "red"}
+        />
+        <MetricCard
+          label="Max drawdown"
+          value={`${m.max_drawdown_pct.toFixed(2)}%`}
+          subValue={`$${m.max_drawdown.toLocaleString()}`}
+          color="red"
+        />
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Period: {m.first_date} → {m.last_exit_date}. Avg trade P&L: ${m.avg_trade_pnl.toLocaleString()}.
+      </p>
+
+      {/* Equity curve */}
+      <div className="rounded-lg border border-border bg-card p-4">
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+          Cumulative P&L over time
+        </p>
+        <div className="h-64">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={result.equity_curve}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+              <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#64748b" }} />
+              <YAxis tick={{ fontSize: 11, fill: "#64748b" }} />
+              <ReferenceLine y={0} stroke="#475569" strokeDasharray="4 2" />
+              <RechartsTooltip
+                contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 6 }}
+                labelStyle={{ color: "#f1f5f9" }}
+                formatter={(value: number) => [`$${value.toFixed(2)}`, "Cumulative P&L"]}
+              />
+              <Line
+                type="monotone"
+                dataKey="cumulative_pnl"
+                stroke={m.total_pnl >= 0 ? "#10b981" : "#ef4444"}
+                strokeWidth={2}
+                dot={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Recent trades */}
+      <div>
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+          Last 10 trades in this strategy
+        </p>
+        <div className="overflow-x-auto rounded-lg border border-border bg-card">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-secondary/30">
+                <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Date</th>
+                <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Ticker</th>
+                <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Type</th>
+                <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Dir</th>
+                <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Trade P&L</th>
+                <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Cum P&L</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.equity_curve.slice(-10).reverse().map((p, i) => (
+                <tr key={i} className="border-b border-border/50 last:border-0">
+                  <td className="px-3 py-2 text-muted-foreground">{p.date}</td>
+                  <td className="px-3 py-2 font-medium">{p.ticker}</td>
+                  <td className="px-3 py-2 text-muted-foreground text-xs">{SIGNAL_TYPE_LABEL[p.signal_type] ?? p.signal_type}</td>
+                  <td className="px-3 py-2 text-xs">{p.direction}</td>
+                  <td className={`px-3 py-2 text-right font-medium ${p.trade_pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                    {p.trade_pnl >= 0 ? "+" : ""}${p.trade_pnl.toFixed(2)}
+                  </td>
+                  <td className={`px-3 py-2 text-right ${p.cumulative_pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                    ${p.cumulative_pnl.toFixed(2)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MetricCard({
+  label, value, subValue, color,
+}: {
+  label: string;
+  value: string;
+  subValue?: string;
+  color: "emerald" | "red" | "muted";
+}) {
+  const colorClass = color === "emerald" ? "text-emerald-400" : color === "red" ? "text-red-400" : "text-foreground";
+  return (
+    <div className="rounded-lg border border-border bg-card p-4">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className={`text-xl font-bold mt-1 ${colorClass}`}>{value}</p>
+      {subValue && <p className="text-xs text-muted-foreground mt-0.5">{subValue}</p>}
+    </div>
   );
 }

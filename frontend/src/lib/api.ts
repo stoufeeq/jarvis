@@ -117,6 +117,14 @@ export const signalsApi = {
   outcomes: (limit = 50) => api.get("/signals/outcomes", { params: { limit } }),
   backfillOutcomes: (limit?: number) =>
     api.post("/signals/outcomes/backfill", null, { params: limit ? { limit } : {} }),
+  backtest: (data: {
+    signal_type?: string | null;
+    direction?: string | null;
+    min_strength?: number;
+    hold_period?: string;
+    capital_per_trade?: number;
+    ticker?: string | null;
+  }) => api.post("/signals/backtest", data),
 };
 
 export const advisorApi = {

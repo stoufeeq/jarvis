@@ -289,6 +289,44 @@ export interface SignalPerformance {
   by_strength: Record<string, PerformanceByTimeframe>;
 }
 
+export interface BacktestMetrics {
+  n_trades: number;
+  wins: number;
+  losses: number;
+  hit_rate_pct: number;
+  total_pnl: number;
+  total_return_pct: number;
+  avg_trade_pnl: number;
+  max_drawdown: number;
+  max_drawdown_pct: number;
+  first_date: string | null;
+  last_exit_date: string | null;
+}
+
+export interface BacktestEquityPoint {
+  date: string;
+  ticker: string;
+  signal_type: string;
+  direction: string;
+  strength: number;
+  trade_pnl: number;
+  cumulative_pnl: number;
+  trade_return_pct: number;
+}
+
+export interface BacktestBenchmark {
+  return_pct: number | null;
+  first_close: number | null;
+  last_close: number | null;
+}
+
+export interface BacktestResult {
+  strategy: Record<string, unknown>;
+  metrics: BacktestMetrics;
+  equity_curve: BacktestEquityPoint[];
+  benchmark: BacktestBenchmark;
+}
+
 export interface BriefingSession {
   state: "open" | "pre_market" | "after_hours" | "closed_overnight" | "closed_weekend" | "closed_holiday";
   is_trading_day: boolean;
