@@ -169,16 +169,20 @@ class PortfolioService:
                 )
             new_cash = cash + cost
 
+        # Detect asset type — crypto vs stock
+        from app.data.crypto import is_crypto
+        asset_type = AssetType.crypto if is_crypto(ticker) else AssetType.stock
+
         # Create the Trade row (immutable ledger)
         trade = Trade(
             portfolio_id=portfolio.id,
             ticker=ticker,
-            asset_type=AssetType.stock,
+            asset_type=asset_type,
             action=action,
             quantity=Decimal(str(quantity)),
             price=Decimal(str(price)),
             fees=Decimal("0"),
-            currency=portfolio.currency or "USD",
+            currency="USD" if asset_type == AssetType.crypto else (portfolio.currency or "USD"),
             traded_at=datetime.now(timezone.utc),
             notes="Paper trade",
         )

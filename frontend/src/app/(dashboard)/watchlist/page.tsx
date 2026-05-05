@@ -7,6 +7,7 @@ import { watchlistApi, marketApi, signalsApi } from "@/lib/api";
 import { TickerSearch } from "@/components/ui/TickerSearch";
 import { InlineChart } from "@/components/charts/InlineChart";
 import { formatCurrency, pnlColor } from "@/lib/utils";
+import { isCrypto } from "@/lib/crypto";
 import type { Quote, WatchlistItem } from "@/types";
 import toast from "react-hot-toast";
 
@@ -301,6 +302,11 @@ export default function WatchlistPage() {
                             ▶
                           </span>
                           {ticker}
+                          {isCrypto(ticker) && (
+                            <span className="ml-1.5 text-[10px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500">
+                              crypto
+                            </span>
+                          )}
                         </button>
                       </td>
                       <td className="px-4 py-3 text-right">

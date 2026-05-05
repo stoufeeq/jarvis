@@ -1,6 +1,9 @@
 """
-Market data service — wraps yfinance for MVP.
-Swap out the provider by replacing the methods below with Polygon.io calls.
+Market data service — wraps yfinance for equity tickers, routes crypto
+tickers (BTC, ETH, etc.) to CoinGecko via CryptoMarketDataService.
+
+The two providers are merged transparently: callers don't need to know
+whether a ticker is equity or crypto. Routing decisions happen here.
 """
 
 import asyncio
@@ -10,6 +13,12 @@ from functools import partial
 import yfinance as yf
 
 from app.config import get_settings
+from app.data.crypto import is_crypto
+from app.services.crypto_market_data import (
+    CryptoMarketDataService,
+    filter_crypto,
+    filter_non_crypto,
+)
 
 settings = get_settings()
 
@@ -30,6 +39,13 @@ class MarketDataService:
         return await loop.run_in_executor(None, partial(func, *args, **kwargs))
 
     async def get_quote(self, ticker: str) -> dict:
+        # Route crypto tickers (BTC, ETH, etc.) to CoinGecko
+        if is_crypto(ticker):
+            quote = await CryptoMarketDataService.get_quote(ticker)
+            if quote is None:
+                raise ValueError(f"No data for {ticker}")
+            return quote
+
         import time as _time
         cached = _QUOTE_CACHE.get(ticker)
         if cached and (_time.monotonic() - cached[0]) < _QUOTE_TTL:
@@ -77,11 +93,36 @@ class MarketDataService:
         return result
 
     async def get_quotes(self, tickers: list[str]) -> list[dict]:
-        tasks = [self.get_quote(t) for t in tickers]
+        # Split crypto from equity tickers — crypto is fetched in a single
+        # batched CoinGecko call, equities are fetched in parallel via yfinance.
+        crypto_tickers = filter_crypto(tickers)
+        equity_tickers = filter_non_crypto(tickers)
+
+        tasks: list = []
+        if equity_tickers:
+            tasks.extend(self.get_quote(t) for t in equity_tickers)
+        if crypto_tickers:
+            tasks.append(CryptoMarketDataService.get_quotes(crypto_tickers))
+
+        if not tasks:
+            return []
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        return [r for r in results if not isinstance(r, Exception)]
+        out: list[dict] = []
+        for r in results:
+            if isinstance(r, Exception):
+                continue
+            if isinstance(r, list):
+                out.extend(r)
+            else:
+                out.append(r)
+        return out
 
     async def get_history(self, ticker: str, period: str, interval: str) -> dict:
+        # Route crypto tickers to CoinGecko OHLC
+        if is_crypto(ticker):
+            return await CryptoMarketDataService.get_history(ticker, period, interval)
+
         INTRADAY = {"1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h"}
 
         def _fetch():
@@ -125,7 +166,11 @@ class MarketDataService:
                 if q.get("symbol")
             ]
 
-        return await self._run_sync(_fetch)
+        equity_results = await self._run_sync(_fetch)
+        # Always also surface matching crypto from the curated list (cheap, sync)
+        crypto_results = CryptoMarketDataService.search(query)
+        # Show crypto matches first when user is clearly typing a crypto symbol
+        return crypto_results + equity_results
 
     async def get_fx_rates(self, currencies: list[str], base: str = "USD") -> dict[str, float]:
         """Return {currency: rate_to_base} for each foreign currency.
@@ -188,6 +233,10 @@ class MarketDataService:
         return result
 
     async def get_currency(self, ticker: str) -> dict:
+        # Crypto is always quoted in USD by CoinGecko
+        if is_crypto(ticker):
+            return {"ticker": ticker, "currency": "USD"}
+
         def _fetch():
             info = yf.Ticker(ticker).fast_info
             raw = getattr(info, "currency", "USD") or "USD"
@@ -205,6 +254,9 @@ class MarketDataService:
 
     async def get_ohlcv_dataframe(self, ticker: str, period: str = "6mo", interval: str = "1d"):
         """Returns a pandas DataFrame — used internally by the signal engine."""
+        if is_crypto(ticker):
+            return await CryptoMarketDataService.get_ohlcv_dataframe(ticker, period, interval)
+
         def _fetch():
             return yf.Ticker(ticker).history(period=period, interval=interval)
 

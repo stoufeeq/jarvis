@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { signalsApi, marketApi } from "@/lib/api";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { signalsApi, marketApi, portfolioApi } from "@/lib/api";
 import { formatCurrency } from "@/lib/utils";
-import type { Signal, OptionsFlowSummary, UnusualContract, UWFlowItem, SignalPerformance, PerformanceTimeframe, PerformanceByTimeframe } from "@/types";
+import type { Portfolio, Signal, OptionsFlowSummary, UnusualContract, UWFlowItem, SignalPerformance, PerformanceTimeframe, PerformanceByTimeframe } from "@/types";
+import { useTradingModeStore } from "@/store/tradingMode";
 import toast from "react-hot-toast";
 
 const SIGNAL_TYPE_LABEL: Record<string, string> = {
@@ -204,6 +205,45 @@ function SignalsTab() {
 }
 
 function SignalCard({ signal }: { signal: Signal }) {
+  const tradingMode = useTradingModeStore((s) => s.mode);
+  const isPaper = tradingMode === "paper";
+  const qc = useQueryClient();
+
+  // Fetch portfolios only when in paper mode (so we know if a paper portfolio
+  // exists and can target trades at it)
+  const { data: portfolios = [] } = useQuery<Portfolio[]>({
+    queryKey: ["portfolios"],
+    queryFn: () => portfolioApi.list().then((r) => r.data),
+    staleTime: 60_000,
+    enabled: isPaper,
+  });
+  const paperPortfolio = portfolios.find((p) => p.broker === "paper" && p.is_active);
+
+  const [showTradeForm, setShowTradeForm] = useState(false);
+  const [tradeQty, setTradeQty] = useState("1");
+
+  const tradeMutation = useMutation({
+    mutationFn: (action: "buy" | "sell") =>
+      portfolioApi.paperTrade(paperPortfolio!.id, {
+        ticker: signal.ticker,
+        action,
+        quantity: parseFloat(tradeQty) || 1,
+      }),
+    onSuccess: (_, action) => {
+      toast.success(`Paper ${action.toUpperCase()} ${tradeQty} ${signal.ticker} executed`);
+      setShowTradeForm(false);
+      setTradeQty("1");
+      qc.invalidateQueries({ queryKey: ["portfolios"] });
+      qc.invalidateQueries({ queryKey: ["positions", paperPortfolio!.id] });
+      qc.invalidateQueries({ queryKey: ["trades", paperPortfolio!.id] });
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        ?? "Paper trade failed";
+      toast.error(msg);
+    },
+  });
+
   const dirColor =
     signal.direction === "bullish"
       ? "text-emerald-500 bg-emerald-500/10"
@@ -212,6 +252,9 @@ function SignalCard({ signal }: { signal: Signal }) {
       : "text-yellow-500 bg-yellow-500/10";
 
   const strength = signal.strength ?? 0;
+  // Suggest the action that matches the signal's direction
+  const suggestedAction: "buy" | "sell" =
+    signal.direction === "bearish" ? "sell" : "buy";
 
   return (
     <div className="rounded-xl border border-border bg-card p-4 space-y-3">
@@ -261,6 +304,52 @@ function SignalCard({ signal }: { signal: Signal }) {
               </span>
             );
           })}
+        </div>
+      )}
+
+      {/* Paper Trade button — only visible in Paper mode with an existing paper portfolio */}
+      {isPaper && paperPortfolio && (
+        <div className="border-t border-border/50 pt-3">
+          {!showTradeForm ? (
+            <button
+              onClick={() => setShowTradeForm(true)}
+              className="text-xs font-medium px-3 py-1.5 rounded-md bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 transition-colors"
+            >
+              Paper Trade ({suggestedAction})
+            </button>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">Quantity:</span>
+              <input
+                type="number"
+                value={tradeQty}
+                onChange={(e) => setTradeQty(e.target.value)}
+                min="0"
+                step="0.0001"
+                className="w-24 px-2 py-1 rounded border border-border bg-input text-sm"
+              />
+              <button
+                onClick={() => tradeMutation.mutate("buy")}
+                disabled={tradeMutation.isPending}
+                className="px-3 py-1 rounded bg-emerald-500 text-emerald-950 text-xs font-medium disabled:opacity-50"
+              >
+                Buy
+              </button>
+              <button
+                onClick={() => tradeMutation.mutate("sell")}
+                disabled={tradeMutation.isPending}
+                className="px-3 py-1 rounded bg-red-500 text-red-50 text-xs font-medium disabled:opacity-50"
+              >
+                Sell
+              </button>
+              <button
+                onClick={() => { setShowTradeForm(false); setTradeQty("1"); }}
+                className="px-3 py-1 rounded text-xs text-muted-foreground hover:text-foreground"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
         </div>
       )}
 
