@@ -115,6 +115,10 @@ export const signalsApi = {
   insider: (params?: object) => api.get("/signals/insider", { params }),
   performance: () => api.get("/signals/performance"),
   outcomes: (limit = 50) => api.get("/signals/outcomes", { params: { limit } }),
+  aggregated: (params?: { ticker?: string; signal_type?: string; limit?: number }) =>
+    api.get("/signals/aggregated", { params }),
+  aggregatedByTicker: (limit = 100) =>
+    api.get("/signals/aggregated/by-ticker", { params: { limit } }),
   backfillOutcomes: (limit?: number) =>
     api.post("/signals/outcomes/backfill", null, { params: limit ? { limit } : {} }),
   backtest: (data: {

@@ -9,6 +9,7 @@ from app.models.user import User
 from app.schemas.signal import SignalOutcomeRead, SignalRead
 from app.schemas.insider_trade import InsiderTradeRead
 from app.services.backtest import BacktestService
+from app.services.signal_aggregator import SignalAggregator
 from app.services.signal_engine import SignalEngine
 from app.services.signal_outcome import SignalOutcomeService
 
@@ -82,6 +83,38 @@ async def get_recent_outcomes(
 ):
     """Recent tracked signal outcomes (raw rows, newest first)."""
     return await SignalOutcomeService(db).list_recent(limit=limit)
+
+
+@router.get("/aggregated")
+async def get_aggregated_signals(
+    ticker: str | None = Query(None),
+    signal_type: SignalType | None = Query(None),
+    limit: int = Query(200, le=500),
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Aggregate signals by (ticker, signal_type) so contradicting bullish/bearish
+    rules within the same category resolve to a single net verdict.
+
+    Math: score = sum(strength × ±1 by direction); confidence = strong if all
+    rules agree, moderate if ≥70% agree, mixed otherwise. Each entry includes
+    the underlying rule-level signals so users can drill into the details."""
+    return await SignalAggregator(db).aggregated_by_ticker_category(
+        ticker=ticker, signal_type=signal_type, limit=limit
+    )
+
+
+@router.get("/aggregated/by-ticker")
+async def get_aggregated_signals_by_ticker(
+    limit: int = Query(100, le=300),
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ticker scorecard view: one entry per ticker with per-category breakdown.
+
+    For each ticker shows overall direction (sum of all category scores) plus
+    expandable per-category details (technical, fundamental, insider, etc.)."""
+    return await SignalAggregator(db).aggregated_by_ticker(limit=limit)
 
 
 @router.post("/backtest")

@@ -327,6 +327,42 @@ export interface BacktestResult {
   benchmark: BacktestBenchmark;
 }
 
+export interface AggregatedRule {
+  id: number;
+  direction: "bullish" | "bearish" | "neutral";
+  strength: number;
+  rationale: string | null;
+  indicators: string | null;
+  timeframe: string | null;
+  created_at: string | null;
+  expires_at: string | null;
+}
+
+export interface AggregatedCategory {
+  ticker: string;
+  signal_type: string;
+  net_direction: "bullish" | "bearish" | "neutral";
+  net_strength: number;
+  score: number;
+  confidence: "strong" | "moderate" | "mixed";
+  bullish_count: number;
+  bearish_count: number;
+  neutral_count: number;
+  rule_count: number;
+  rules: AggregatedRule[];
+}
+
+export interface AggregatedTicker {
+  ticker: string;
+  overall_direction: "bullish" | "bearish" | "neutral";
+  overall_score: number;
+  total_rules: number;
+  total_bullish: number;
+  total_bearish: number;
+  category_count: number;
+  categories: AggregatedCategory[];
+}
+
 export interface BriefingSession {
   state: "open" | "pre_market" | "after_hours" | "closed_overnight" | "closed_weekend" | "closed_holiday";
   is_trading_day: boolean;

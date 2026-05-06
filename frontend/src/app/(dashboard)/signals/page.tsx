@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { signalsApi, marketApi, portfolioApi } from "@/lib/api";
 import { formatCurrency } from "@/lib/utils";
-import type { Portfolio, Signal, OptionsFlowSummary, UnusualContract, UWFlowItem, SignalPerformance, PerformanceTimeframe, PerformanceByTimeframe, BacktestResult } from "@/types";
+import type { Portfolio, Signal, OptionsFlowSummary, UnusualContract, UWFlowItem, SignalPerformance, PerformanceTimeframe, PerformanceByTimeframe, BacktestResult, AggregatedTicker, AggregatedCategory } from "@/types";
 import { useTradingModeStore } from "@/store/tradingMode";
 import toast from "react-hot-toast";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceLine } from "recharts";
@@ -83,6 +83,7 @@ function SignalsTab() {
   const [type, setType] = useState<string>("");
   const [scanTicker, setScanTicker] = useState("");
   const [includeAi, setIncludeAi] = useState(false);
+  const [groupByTicker, setGroupByTicker] = useState(false);
 
   const { data: signals = [], isLoading, refetch } = useQuery<Signal[]>({
     queryKey: ["signals", ticker, direction, type],
@@ -95,6 +96,13 @@ function SignalsTab() {
           limit: 50,
         })
         .then((r) => r.data),
+    enabled: !groupByTicker,
+  });
+
+  const { data: aggregated = [], isLoading: aggLoading, refetch: refetchAgg } = useQuery<AggregatedTicker[]>({
+    queryKey: ["signals", "aggregated-by-ticker"],
+    queryFn: () => signalsApi.aggregatedByTicker(100).then((r) => r.data),
+    enabled: groupByTicker,
   });
 
   const scanMutation = useMutation({
@@ -106,7 +114,7 @@ function SignalsTab() {
           ? `${count} signal(s) found for ${scanTicker.toUpperCase()}`
           : `No signals found for ${scanTicker.toUpperCase()}`
       );
-      refetch();
+      if (groupByTicker) refetchAgg(); else refetch();
     },
     onError: () => toast.error("Scan failed"),
   });
@@ -158,51 +166,102 @@ function SignalsTab() {
         </label>
       </div>
 
-      {/* Filters */}
-      <div className="flex gap-3 flex-wrap">
-        <input
-          value={ticker}
-          onChange={(e) => setTicker(e.target.value.toUpperCase())}
-          placeholder="Filter by ticker"
-          className="px-3 py-2 rounded-md border border-border bg-input text-sm w-36 focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-        <select
-          value={direction}
-          onChange={(e) => setDirection(e.target.value)}
-          className="px-3 py-2 rounded-md border border-border bg-input text-sm"
-        >
-          {DIRECTIONS.map((d) => (
-            <option key={d} value={d}>
-              {d || "All directions"}
-            </option>
-          ))}
-        </select>
-        <select
-          value={type}
-          onChange={(e) => setType(e.target.value)}
-          className="px-3 py-2 rounded-md border border-border bg-input text-sm"
-        >
-          {TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t || "All types"}
-            </option>
-          ))}
-        </select>
+      {/* View toggle */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted-foreground">View:</span>
+        <div className="flex gap-1 p-1 rounded-md bg-secondary/40 border border-border">
+          <button
+            onClick={() => setGroupByTicker(false)}
+            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+              !groupByTicker ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            All signals
+          </button>
+          <button
+            onClick={() => setGroupByTicker(true)}
+            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+              groupByTicker ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+            }`}
+            title="Group rules by ticker — see net verdict per category"
+          >
+            Group by ticker
+          </button>
+        </div>
+        {groupByTicker && (
+          <span className="text-xs text-muted-foreground/70 ml-1">
+            Net verdict per (ticker, category) using sum-of-strengths math
+          </span>
+        )}
       </div>
 
-      {isLoading && <p className="text-muted-foreground text-sm">Loading…</p>}
+      {/* Filters — only shown in flat view */}
+      {!groupByTicker && (
+        <div className="flex gap-3 flex-wrap">
+          <input
+            value={ticker}
+            onChange={(e) => setTicker(e.target.value.toUpperCase())}
+            placeholder="Filter by ticker"
+            className="px-3 py-2 rounded-md border border-border bg-input text-sm w-36 focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <select
+            value={direction}
+            onChange={(e) => setDirection(e.target.value)}
+            className="px-3 py-2 rounded-md border border-border bg-input text-sm"
+          >
+            {DIRECTIONS.map((d) => (
+              <option key={d} value={d}>
+                {d || "All directions"}
+              </option>
+            ))}
+          </select>
+          <select
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+            className="px-3 py-2 rounded-md border border-border bg-input text-sm"
+          >
+            {TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t || "All types"}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
-      {!isLoading && signals.length === 0 && (
+      {/* Loading */}
+      {!groupByTicker && isLoading && <p className="text-muted-foreground text-sm">Loading…</p>}
+      {groupByTicker && aggLoading && <p className="text-muted-foreground text-sm">Aggregating…</p>}
+
+      {/* Empty states */}
+      {!groupByTicker && !isLoading && signals.length === 0 && (
         <div className="rounded-xl border border-dashed border-border p-10 text-center text-muted-foreground text-sm">
           No signals yet. Use "Scan Now" above to analyse a ticker.
         </div>
       )}
+      {groupByTicker && !aggLoading && aggregated.length === 0 && (
+        <div className="rounded-xl border border-dashed border-border p-10 text-center text-muted-foreground text-sm">
+          No active signals across any ticker.
+        </div>
+      )}
 
-      <div className="space-y-3 overflow-x-hidden">
-        {signals.map((s) => (
-          <SignalCard key={s.id} signal={s} />
-        ))}
-      </div>
+      {/* Aggregated view */}
+      {groupByTicker && aggregated.length > 0 && (
+        <div className="space-y-3">
+          {aggregated.map((t) => (
+            <AggregatedTickerCard key={t.ticker} ticker={t} />
+          ))}
+        </div>
+      )}
+
+      {/* Flat signal list */}
+      {!groupByTicker && (
+        <div className="space-y-3 overflow-x-hidden">
+          {signals.map((s) => (
+            <SignalCard key={s.id} signal={s} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -391,6 +450,107 @@ function SignalCard({ signal }: { signal: Signal }) {
     </div>
   );
 }
+
+/* ── Aggregated ticker card (Group by ticker view) ────────────────────────── */
+
+const DIRECTION_PILL: Record<string, string> = {
+  bullish: "text-emerald-500 bg-emerald-500/10",
+  bearish: "text-red-500 bg-red-500/10",
+  neutral: "text-yellow-500 bg-yellow-500/10",
+};
+
+const CONFIDENCE_PILL: Record<string, string> = {
+  strong: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+  moderate: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+  mixed: "bg-secondary/50 text-muted-foreground border-border",
+};
+
+function AggregatedTickerCard({ ticker: t }: { ticker: AggregatedTicker }) {
+  const [expanded, setExpanded] = useState(false);
+  const dirPill = DIRECTION_PILL[t.overall_direction] ?? DIRECTION_PILL.neutral;
+  const arrow = t.overall_direction === "bullish" ? "▲" : t.overall_direction === "bearish" ? "▼" : "●";
+
+  return (
+    <div className="rounded-xl border border-border bg-card overflow-hidden">
+      {/* Ticker row */}
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary/20 transition-colors text-left"
+      >
+        <span
+          className="text-xs text-muted-foreground/50 transition-transform"
+          style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}
+        >
+          ▶
+        </span>
+        <span className="text-base font-bold">{t.ticker}</span>
+        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${dirPill}`}>
+          {arrow} {t.overall_direction}
+        </span>
+        <span className="text-xs text-muted-foreground ml-auto">
+          {t.total_bullish} bullish · {t.total_bearish} bearish · {t.category_count} categories · {t.total_rules} rules
+        </span>
+      </button>
+
+      {/* Per-category breakdown */}
+      <div className="border-t border-border/50 divide-y divide-border/40">
+        {t.categories.map((c) => (
+          <CategoryRow key={c.signal_type} category={c} expanded={expanded} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CategoryRow({ category: c, expanded }: { category: AggregatedCategory; expanded: boolean }) {
+  const [showRules, setShowRules] = useState(false);
+  const dirPill = DIRECTION_PILL[c.net_direction] ?? DIRECTION_PILL.neutral;
+  const confPill = CONFIDENCE_PILL[c.confidence] ?? CONFIDENCE_PILL.mixed;
+  const arrow = c.net_direction === "bullish" ? "▲" : c.net_direction === "bearish" ? "▼" : "●";
+  const stars = c.net_strength > 0 ? "★".repeat(c.net_strength) + "☆".repeat(5 - c.net_strength) : "—";
+  const label = SIGNAL_TYPE_LABEL[c.signal_type] ?? c.signal_type;
+
+  // Hide rows when ticker card is collapsed; show summary line only when expanded
+  if (!expanded) return null;
+
+  return (
+    <div className="px-4 py-2.5">
+      <button
+        onClick={() => setShowRules((v) => !v)}
+        className="w-full flex items-center gap-3 flex-wrap text-sm text-left"
+      >
+        <span className="font-medium min-w-[90px]">{label}</span>
+        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${dirPill}`}>
+          {arrow} {c.net_direction}
+        </span>
+        <span className="text-xs text-muted-foreground">{stars}</span>
+        <span className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border ${confPill}`}>
+          {c.confidence}
+        </span>
+        <span className="text-xs text-muted-foreground ml-auto">
+          {c.bullish_count}B / {c.bearish_count}S · {c.rule_count} rules
+        </span>
+      </button>
+
+      {showRules && c.rules.length > 0 && (
+        <div className="mt-2 space-y-1.5 pl-3 border-l-2 border-border">
+          {c.rules.map((r) => (
+            <div key={r.id} className="text-xs flex items-start gap-2">
+              <span className={`mt-0.5 shrink-0 w-12 text-[10px] uppercase font-semibold ${
+                r.direction === "bullish" ? "text-emerald-500" : r.direction === "bearish" ? "text-red-500" : "text-yellow-500"
+              }`}>
+                {r.direction}
+              </span>
+              <span className="text-muted-foreground/70 shrink-0">{"★".repeat(r.strength)}</span>
+              <span className="text-muted-foreground break-words">{r.rationale ?? r.indicators ?? "—"}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 /* ── Options Flow tab ─────────────────────────────────────────────────────── */
 
