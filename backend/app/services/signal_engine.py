@@ -13,6 +13,7 @@ from app.signals.cross_impact import CrossImpactSignalProvider
 from app.signals.earnings import EarningsSignalProvider
 from app.signals.fundamental import FundamentalSignalProvider
 from app.signals.insider import InsiderSignalProvider
+from app.signals.iv_analytics import IVAnalyticsSignalProvider
 from app.signals.macro_events import EconomicCalendarProvider
 from app.signals.options_flow import OptionsFlowSignalProvider
 from app.signals.technical import TechnicalSignalProvider
@@ -27,6 +28,7 @@ class SignalEngine:
             TechnicalSignalProvider(),
             InsiderSignalProvider(db),
             OptionsFlowSignalProvider(),
+            IVAnalyticsSignalProvider(),
             FundamentalSignalProvider(),
             EarningsSignalProvider(),
             EconomicCalendarProvider(),
