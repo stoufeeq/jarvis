@@ -284,14 +284,26 @@ export default function ExplorePage() {
       {/* ── Section 3: Valuation ────────────────────────────────────────────── */}
       {details?.valuation && (
         <Section title="Valuation">
-          <Stat label="P/E (trailing)" value={fmtNum(details.valuation.pe_trailing)} />
-          <Stat label="P/E (forward)" value={fmtNum(details.valuation.pe_forward)} />
+          <Stat
+            label="P/E (trailing)"
+            value={fmtNum(details.valuation.pe_trailing)}
+            subValue={details.valuation.eps_trailing != null ? `EPS (TTM) $${fmtNum(details.valuation.eps_trailing)}` : undefined}
+          />
+          <Stat
+            label="P/E (current FY)"
+            value={fmtNum(details.valuation.pe_forward_current_fy)}
+            subValue={details.valuation.eps_current_fy != null ? `EPS (current FY) $${fmtNum(details.valuation.eps_current_fy)}` : "current fiscal year est."}
+          />
+          <Stat
+            label="P/E (next FY)"
+            value={fmtNum(details.valuation.pe_forward_next_fy)}
+            subValue={details.valuation.eps_forward != null ? `EPS (next FY) $${fmtNum(details.valuation.eps_forward)}` : "next fiscal year est."}
+          />
           <Stat label="P/B" value={fmtNum(details.valuation.pb_ratio)} />
           <Stat label="PEG" value={fmtNum(details.valuation.peg_ratio)} />
           <Stat label="EV/EBITDA" value={fmtNum(details.valuation.ev_ebitda)} />
-          <Stat label="EPS (TTM)" value={fmtNum(details.valuation.eps_trailing)} />
-          <Stat label="EPS (forward)" value={fmtNum(details.valuation.eps_forward)} />
           <Stat label="Dividend yield" value={fmtPct(details.valuation.dividend_yield_pct)} />
+          <Stat label="Payout ratio" value={fmtPct(details.valuation.payout_ratio_pct)} />
         </Section>
       )}
 

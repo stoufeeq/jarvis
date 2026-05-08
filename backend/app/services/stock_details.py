@@ -143,13 +143,25 @@ def _build_quote_section(quote: dict, info: dict) -> dict:
 
 
 def _build_valuation(info: dict) -> dict:
+    # yfinance exposes two distinct "forward" P/E estimates with different
+    # time horizons. Most retail platforms (Yahoo Finance website, Google
+    # Finance, MarketWatch) display the current-FY value as "Forward P/E";
+    # yfinance's forwardPE field uses the next fiscal year's EPS, which
+    # gives a different (often lower) value when analysts project growth.
+    # We surface both, clearly labelled.
     return {
         "pe_trailing": _f(info.get("trailingPE")),
-        "pe_forward": _f(info.get("forwardPE")),
+        # Forward P/E (current fiscal year) — matches what most websites show.
+        # Computed as price / current-year EPS estimate.
+        "pe_forward_current_fy": _f(info.get("priceEpsCurrentYear")),
+        # Forward P/E (next fiscal year) — yfinance's "forwardPE" field.
+        # Uses next-year EPS estimate. More optimistic if growth is expected.
+        "pe_forward_next_fy": _f(info.get("forwardPE")),
         "pb_ratio": _f(info.get("priceToBook")),
         "peg_ratio": _f(info.get("pegRatio") or info.get("trailingPegRatio")),
         "ev_ebitda": _f(info.get("enterpriseToEbitda")),
         "eps_trailing": _f(info.get("trailingEps")),
+        "eps_current_fy": _f(info.get("epsCurrentYear")),
         "eps_forward": _f(info.get("forwardEps")),
         # yfinance has two dividend yield fields with different units:
         # - trailingAnnualDividendYield: decimal fraction (0.0036 = 0.36%) — preferred, predictable

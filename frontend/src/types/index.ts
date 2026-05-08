@@ -379,11 +379,16 @@ export interface StockDetailsQuote {
 
 export interface StockDetailsValuation {
   pe_trailing: number | null;
-  pe_forward: number | null;
+  /** Forward P/E using current fiscal year EPS estimate — matches what
+   *  most retail platforms show as "Forward P/E". */
+  pe_forward_current_fy: number | null;
+  /** Forward P/E using next fiscal year EPS estimate (yfinance forwardPE). */
+  pe_forward_next_fy: number | null;
   pb_ratio: number | null;
   peg_ratio: number | null;
   ev_ebitda: number | null;
   eps_trailing: number | null;
+  eps_current_fy: number | null;
   eps_forward: number | null;
   dividend_yield_pct: number | null;
   payout_ratio_pct: number | null;
