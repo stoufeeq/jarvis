@@ -13,6 +13,7 @@ import { useTradingModeStore } from "@/store/tradingMode";
 import type { Portfolio, Position, Signal, Quote, LiquidityResponse, Briefing } from "@/types";
 import Link from "next/link";
 import { AnimatedNumber } from "@/components/ui/AnimatedNumber";
+import { TickerLink } from "@/components/ui/TickerLink";
 
 const PAGE_SIZE = 7;
 const MAX_MOVERS = 49;
@@ -331,7 +332,7 @@ function SignalRow({ signal }: { signal: Signal }) {
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-semibold">{signal.ticker}</span>
+            <TickerLink ticker={signal.ticker} stopPropagation className="font-semibold" />
             <span className={`text-xs font-medium uppercase ${dirColor}`}>
               {signal.direction}
             </span>
@@ -390,7 +391,7 @@ function MoverRow({
     <div className="flex items-center gap-2 px-3 py-2 hover:bg-secondary/30 transition-colors">
       <span className="text-xs text-muted-foreground/50 w-5 shrink-0 text-right">{rank}</span>
       <div className="flex-1 min-w-0">
-        <span className="font-semibold text-sm">{stock.ticker}</span>
+        <TickerLink ticker={stock.ticker} className="font-semibold text-sm" />
         <span className="text-xs text-muted-foreground ml-2 truncate hidden sm:inline">{stock.name}</span>
       </div>
       <span className={`text-sm font-semibold shrink-0 ${pctClass}`}>{pctLabel}</span>

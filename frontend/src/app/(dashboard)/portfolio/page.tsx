@@ -12,6 +12,7 @@ import { AnimatedNumber } from "@/components/ui/AnimatedNumber";
 import { usePrivacyStore } from "@/store/privacy";
 import { useTradingModeStore } from "@/store/tradingMode";
 import type { Portfolio, Position, Trade, Quote } from "@/types";
+import { TickerLink } from "@/components/ui/TickerLink";
 import toast from "react-hot-toast";
 
 const MASK = "••••••";
@@ -745,20 +746,23 @@ export default function PortfolioPage() {
                       return [
                         <tr key={pos.id} className={`border-b border-border/50 hover:bg-secondary/20 ${isExpanded ? "bg-secondary/10" : ""}`}>
                           <td className="px-4 py-3 font-semibold">
-                            <button
-                              onClick={() => setExpandedTicker(isExpanded ? null : pos.ticker)}
-                              className="flex items-center gap-1.5 hover:text-primary transition-colors"
-                            >
-                              <span className="text-xs text-muted-foreground/50 transition-transform duration-200" style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}>
-                                ▶
-                              </span>
-                              {pos.ticker}
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => setExpandedTicker(isExpanded ? null : pos.ticker)}
+                                className="text-xs text-muted-foreground/50 hover:text-foreground transition-colors"
+                                aria-label={isExpanded ? "Collapse" : "Expand"}
+                              >
+                                <span className="inline-block transition-transform duration-200" style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}>
+                                  ▶
+                                </span>
+                              </button>
+                              <TickerLink ticker={pos.ticker} />
                               {pos.currency && pos.currency !== "USD" && (
                                 <span className="text-xs px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">
                                   {pos.currency}
                                 </span>
                               )}
-                            </button>
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-right">{mv(String(pos.quantity))}</td>
                           <td className="px-4 py-3 text-right">{formatCurrency(pos.avg_cost, pos.currency)}</td>

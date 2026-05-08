@@ -8,6 +8,7 @@ import { TickerSearch } from "@/components/ui/TickerSearch";
 import { InlineChart } from "@/components/charts/InlineChart";
 import { formatCurrency, pnlColor } from "@/lib/utils";
 import { isCrypto } from "@/lib/crypto";
+import { TickerLink } from "@/components/ui/TickerLink";
 import type { Quote, WatchlistItem } from "@/types";
 import toast from "react-hot-toast";
 
@@ -291,23 +292,26 @@ export default function WatchlistPage() {
                       className={`border-b border-border/50 hover:bg-secondary/20 ${isExpanded ? "bg-secondary/10" : ""}`}
                     >
                       <td className="px-4 py-3 font-semibold">
-                        <button
-                          onClick={() => setExpandedTicker((prev) => (prev === ticker ? null : ticker))}
-                          className="flex items-center gap-1.5 hover:text-primary transition-colors"
-                        >
-                          <span
-                            className="text-xs text-muted-foreground/50 transition-transform duration-200"
-                            style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => setExpandedTicker((prev) => (prev === ticker ? null : ticker))}
+                            className="text-xs text-muted-foreground/50 hover:text-foreground transition-colors"
+                            aria-label={isExpanded ? "Collapse" : "Expand"}
                           >
-                            ▶
-                          </span>
-                          {ticker}
+                            <span
+                              className="inline-block transition-transform duration-200"
+                              style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
+                            >
+                              ▶
+                            </span>
+                          </button>
+                          <TickerLink ticker={ticker} />
                           {isCrypto(ticker) && (
                             <span className="ml-1.5 text-[10px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500">
                               crypto
                             </span>
                           )}
-                        </button>
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-right">
                         {q ? (

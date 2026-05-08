@@ -6,6 +6,7 @@ import { signalsApi, marketApi, portfolioApi } from "@/lib/api";
 import { formatCurrency } from "@/lib/utils";
 import type { Portfolio, Signal, OptionsFlowSummary, UnusualContract, UWFlowItem, SignalPerformance, PerformanceTimeframe, PerformanceByTimeframe, BacktestResult, AggregatedTicker, AggregatedCategory } from "@/types";
 import { useTradingModeStore } from "@/store/tradingMode";
+import { TickerLink } from "@/components/ui/TickerLink";
 import toast from "react-hot-toast";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 
@@ -321,7 +322,7 @@ function SignalCard({ signal }: { signal: Signal }) {
   return (
     <div className="rounded-xl border border-border bg-card p-4 space-y-3">
       <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-lg font-bold">{signal.ticker}</span>
+        <TickerLink ticker={signal.ticker} className="text-lg font-bold" />
         <span
           className={`text-xs font-semibold px-2 py-0.5 rounded-full uppercase ${dirColor}`}
         >
@@ -473,24 +474,26 @@ function AggregatedTickerCard({ ticker: t }: { ticker: AggregatedTicker }) {
   return (
     <div className="rounded-xl border border-border bg-card overflow-hidden">
       {/* Ticker row */}
-      <button
-        onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary/20 transition-colors text-left"
-      >
-        <span
-          className="text-xs text-muted-foreground/50 transition-transform"
-          style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}
+      <div className="flex items-center gap-3 px-4 py-3 hover:bg-secondary/20 transition-colors">
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="flex items-center gap-3 flex-1 text-left"
         >
-          ▶
-        </span>
-        <span className="text-base font-bold">{t.ticker}</span>
-        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${dirPill}`}>
-          {arrow} {t.overall_direction}
-        </span>
-        <span className="text-xs text-muted-foreground ml-auto">
-          {t.total_bullish} bullish · {t.total_bearish} bearish · {t.category_count} categories · {t.total_rules} rules
-        </span>
-      </button>
+          <span
+            className="text-xs text-muted-foreground/50 transition-transform"
+            style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}
+          >
+            ▶
+          </span>
+          <TickerLink ticker={t.ticker} stopPropagation className="text-base font-bold" />
+          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${dirPill}`}>
+            {arrow} {t.overall_direction}
+          </span>
+          <span className="text-xs text-muted-foreground ml-auto">
+            {t.total_bullish} bullish · {t.total_bearish} bearish · {t.category_count} categories · {t.total_rules} rules
+          </span>
+        </button>
+      </div>
 
       {/* Per-category breakdown */}
       <div className="border-t border-border/50 divide-y divide-border/40">
@@ -1330,7 +1333,7 @@ function BacktestResultsView({ result }: { result: BacktestResult }) {
               {result.equity_curve.slice(-10).reverse().map((p, i) => (
                 <tr key={i} className="border-b border-border/50 last:border-0">
                   <td className="px-3 py-2 text-muted-foreground">{p.date}</td>
-                  <td className="px-3 py-2 font-medium">{p.ticker}</td>
+                  <td className="px-3 py-2 font-medium"><TickerLink ticker={p.ticker} /></td>
                   <td className="px-3 py-2 text-muted-foreground text-xs">{SIGNAL_TYPE_LABEL[p.signal_type] ?? p.signal_type}</td>
                   <td className="px-3 py-2 text-xs">{p.direction}</td>
                   <td className={`px-3 py-2 text-right font-medium ${p.trade_pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
