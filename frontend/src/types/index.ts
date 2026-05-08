@@ -363,6 +363,115 @@ export interface AggregatedTicker {
   categories: AggregatedCategory[];
 }
 
+export interface StockDetailsQuote {
+  price: number | null;
+  previous_close: number | null;
+  change: number | null;
+  change_pct: number | null;
+  day_low: number | null;
+  day_high: number | null;
+  volume: number;
+  avg_volume: number;
+  market_cap: number | null;
+  fifty_two_week_high: number | null;
+  fifty_two_week_low: number | null;
+}
+
+export interface StockDetailsValuation {
+  pe_trailing: number | null;
+  pe_forward: number | null;
+  pb_ratio: number | null;
+  peg_ratio: number | null;
+  ev_ebitda: number | null;
+  eps_trailing: number | null;
+  eps_forward: number | null;
+  dividend_yield_pct: number | null;
+  payout_ratio_pct: number | null;
+}
+
+export interface StockDetailsGrowth {
+  revenue_ttm: number | null;
+  revenue_growth_pct: number | null;
+  earnings_growth_pct: number | null;
+  net_margin_pct: number | null;
+  operating_margin_pct: number | null;
+  roe_pct: number | null;
+  free_cash_flow: number | null;
+  debt_to_equity: number | null;
+}
+
+export interface StockDetailsTechnicals {
+  rsi14: number | null;
+  macd_signal: "bullish" | "bearish" | "neutral" | null;
+  sma50: number | null;
+  sma200: number | null;
+  above_sma50: boolean | null;
+  above_sma200: boolean | null;
+  beta: number | null;
+}
+
+export interface StockDetailsIVAnalytics {
+  atm_iv: number;
+  hv_20: number | null;
+  iv_hv_ratio: number | null;
+  implied_move_pct: number | null;
+  skew: number | null;
+  days_to_earnings: number | null;
+  expiry_used: string;
+  days_to_expiry: number;
+  current_price: number;
+}
+
+export interface StockDetailsAnalyst {
+  recommendation_key: string | null;
+  recommendation_mean: number | null;
+  n_analysts: number | null;
+  target_mean: number | null;
+  target_high: number | null;
+  target_low: number | null;
+  upside_pct: number | null;
+}
+
+export interface StockDetails {
+  ticker: string;
+  name: string;
+  asset_type: string;
+  exchange: string | null;
+  sector: string | null;
+  industry: string | null;
+  currency: string;
+  quote: StockDetailsQuote;
+  valuation: StockDetailsValuation | null;
+  growth: StockDetailsGrowth | null;
+  technicals: StockDetailsTechnicals;
+  iv_analytics: StockDetailsIVAnalytics | null;
+  analyst: StockDetailsAnalyst | null;
+  options_listed: boolean;
+}
+
+export interface NewsItemDetail {
+  id: number | null;
+  ticker: string;
+  headline: string;
+  url: string | null;
+  source: string | null;
+  sentiment_score: number | null;
+  ai_signal: string | null;
+  published_at: string | null;
+}
+
+export interface InsiderTradeDetail {
+  id: number;
+  insider_name: string;
+  insider_title: string | null;
+  transaction_type: string | null;
+  shares: number | null;
+  price_per_share: number | null;
+  total_value: number | null;
+  filed_at: string | null;
+  transaction_date: string | null;
+}
+
 export interface BriefingSession {
   state: "open" | "pre_market" | "after_hours" | "closed_overnight" | "closed_weekend" | "closed_holiday";
   is_trading_day: boolean;

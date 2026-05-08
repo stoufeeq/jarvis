@@ -173,3 +173,133 @@ async def get_options_flow(ticker: str, _: User = Depends(get_current_user)):
         raise _HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
         raise _HTTPException(status_code=502, detail=f"Options data unavailable: {exc}")
+
+
+@router.get("/details/{ticker}")
+async def get_stock_details(ticker: str, _: User = Depends(get_current_user)):
+    """Comprehensive stock details — quote, valuation, growth, technicals,
+    IV analytics, analyst ratings. Cached 5 min per ticker.
+
+    Used by the Stock Browser / Explore page. Read-only, no DB writes."""
+    from app.services.stock_details import StockDetailsService
+    return await StockDetailsService.get_details(ticker.upper())
+
+
+@router.get("/details/{ticker}/news")
+async def get_stock_news(ticker: str, limit: int = Query(15, le=50), _: User = Depends(get_current_user)):
+    """Recent news for a ticker. Returns DB-cached news first; if none
+    found, fetches fresh from Yahoo Finance RSS on demand."""
+    from datetime import UTC, datetime, timedelta
+    from app.database import AsyncSessionLocal
+    from app.models.news import NewsItem
+    from sqlalchemy import select
+
+    ticker = ticker.upper().strip()
+    async with AsyncSessionLocal() as db:
+        cutoff = datetime.now(UTC) - timedelta(days=14)
+        result = await db.execute(
+            select(NewsItem)
+            .where(NewsItem.ticker == ticker, NewsItem.published_at >= cutoff)
+            .order_by(NewsItem.published_at.desc())
+            .limit(limit)
+        )
+        items = list(result.scalars().all())
+
+        # If nothing in DB, fetch fresh from Yahoo RSS
+        if not items:
+            try:
+                import httpx
+                import xml.etree.ElementTree as ET
+
+                async with httpx.AsyncClient(timeout=10.0, headers={"User-Agent": "Mozilla/5.0"}) as client:
+                    r = await client.get(
+                        f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US"
+                    )
+                    if r.status_code == 200:
+                        root = ET.fromstring(r.text)
+                        from app.models.news import NewsItem as NI
+                        for item in root.findall(".//item")[:limit]:
+                            title = (item.findtext("title") or "").strip()
+                            url = (item.findtext("link") or "").strip()
+                            pub = (item.findtext("pubDate") or "").strip()
+                            if not title:
+                                continue
+                            try:
+                                pub_dt = datetime.strptime(pub, "%a, %d %b %Y %H:%M:%S %z") if pub else datetime.now(UTC)
+                            except Exception:
+                                pub_dt = datetime.now(UTC)
+                            items.append(NI(
+                                ticker=ticker,
+                                headline=title,
+                                url=url,
+                                source="Yahoo Finance",
+                                published_at=pub_dt,
+                            ))
+            except Exception:
+                pass
+
+    return [
+        {
+            "id": getattr(n, "id", None),
+            "ticker": n.ticker,
+            "headline": n.headline,
+            "url": n.url,
+            "source": n.source,
+            "sentiment_score": float(n.sentiment_score) if getattr(n, "sentiment_score", None) is not None else None,
+            "ai_signal": getattr(n, "ai_signal", None),
+            "published_at": n.published_at.isoformat() if n.published_at else None,
+        }
+        for n in items
+    ]
+
+
+@router.get("/details/{ticker}/insider")
+async def get_stock_insider(ticker: str, limit: int = Query(10, le=30), _: User = Depends(get_current_user)):
+    """Recent insider trades for a ticker. Returns DB-cached trades first;
+    if none, fetches from SEC EDGAR on demand (90-day window)."""
+    from app.database import AsyncSessionLocal
+    from app.models.insider_trade import InsiderTrade
+    from sqlalchemy import select
+
+    ticker = ticker.upper().strip()
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(InsiderTrade)
+            .where(InsiderTrade.ticker == ticker)
+            .order_by(InsiderTrade.filed_at.desc())
+            .limit(limit)
+        )
+        trades = list(result.scalars().all())
+
+        # On-demand fetch if none in DB
+        if not trades:
+            try:
+                from app.services.insider_fetcher import InsiderTradeFetcher
+                fetcher = InsiderTradeFetcher(db)
+                await fetcher.fetch_for_ticker(ticker)
+                await db.commit()
+                # Re-query
+                result = await db.execute(
+                    select(InsiderTrade)
+                    .where(InsiderTrade.ticker == ticker)
+                    .order_by(InsiderTrade.filed_at.desc())
+                    .limit(limit)
+                )
+                trades = list(result.scalars().all())
+            except Exception:
+                pass
+
+    return [
+        {
+            "id": t.id,
+            "insider_name": t.insider_name,
+            "insider_title": t.insider_title,
+            "transaction_type": t.transaction_type.value if t.transaction_type else None,
+            "shares": float(t.shares) if t.shares else None,
+            "price_per_share": float(t.price_per_share) if t.price_per_share else None,
+            "total_value": float(t.total_value) if t.total_value else None,
+            "filed_at": t.filed_at.isoformat() if t.filed_at else None,
+            "transaction_date": t.transaction_date.isoformat() if t.transaction_date else None,
+        }
+        for t in trades
+    ]

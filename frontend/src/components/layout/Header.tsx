@@ -2,11 +2,13 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { LogOut, Settings } from "lucide-react";
+import { LogOut, Search, Settings } from "lucide-react";
 import { useAuthStore } from "@/store/auth";
 import { useTradingModeStore } from "@/store/tradingMode";
 import { NotificationBell } from "@/components/ui/NotificationBell";
+import { StockSearchModal } from "@/components/ui/StockSearchModal";
 
 export function Header() {
   const user = useAuthStore((s) => s.user);
@@ -14,6 +16,19 @@ export function Header() {
   const mode = useTradingModeStore((s) => s.mode);
   const setMode = useTradingModeStore((s) => s.setMode);
   const qc = useQueryClient();
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  // Cmd/Ctrl + K opens the search modal globally
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
 
   function switchMode(newMode: "real" | "paper") {
     setMode(newMode);
@@ -61,6 +76,15 @@ export function Header() {
             Paper
           </button>
         </div>
+        {/* Stock search */}
+        <button
+          onClick={() => setSearchOpen(true)}
+          className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+          title="Search stock (⌘K)"
+          aria-label="Search stock"
+        >
+          <Search className="w-4 h-4" />
+        </button>
         <NotificationBell />
         <Link
           href="/settings"
@@ -81,6 +105,7 @@ export function Header() {
           <LogOut className="w-4 h-4" />
         </button>
       </div>
+      <StockSearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
     </header>
   );
 }
