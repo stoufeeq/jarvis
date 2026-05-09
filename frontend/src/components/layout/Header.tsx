@@ -41,7 +41,7 @@ export function Header() {
 
   return (
     <header className="shrink-0 flex items-center justify-between gap-3 px-4 md:px-6 border-b border-border bg-card" style={{ paddingTop: "env(safe-area-inset-top)", minHeight: "calc(3.5rem + env(safe-area-inset-top))" }}>
-      {/* Left side: logo (mobile) + market session badge */}
+      {/* Left side: logo (mobile) + market session badge (desktop only) */}
       <div className="flex items-center gap-3 min-w-0">
         <Image
           src="/logo.png"
@@ -51,7 +51,10 @@ export function Header() {
           className="object-contain md:hidden logo-adaptive shrink-0"
           priority
         />
-        <MarketSessionBadge />
+        {/* Desktop: inline badge. Mobile shows it as a separate row below the header. */}
+        <div className="hidden md:flex">
+          <MarketSessionBadge />
+        </div>
       </div>
       <div className="flex items-center gap-3">
         {/* Real / Paper trading mode toggle */}

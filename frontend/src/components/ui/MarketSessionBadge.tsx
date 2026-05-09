@@ -70,13 +70,12 @@ export function MarketSessionBadge() {
 
   return (
     <div
-      className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-secondary/40 border border-border"
+      className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-secondary/40 border border-border whitespace-nowrap"
       title={tooltip}
     >
       <span className={`w-2 h-2 rounded-full shrink-0 ${dotClass}`} />
-      <span className="text-xs font-medium text-foreground hidden sm:inline">
-        {label}
-      </span>
+      <span className="text-xs font-medium text-foreground">{label}</span>
+      <span className="text-xs text-muted-foreground/40">·</span>
       <span className="text-xs text-muted-foreground">{countdown}</span>
     </div>
   );
