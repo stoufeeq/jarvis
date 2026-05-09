@@ -99,12 +99,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </div>
       <div className="flex flex-col flex-1 overflow-hidden">
         <Header />
-        {/* Mobile-only market session strip — full width below header */}
-        <div className="md:hidden flex justify-center px-4 py-1.5 border-b border-border/50 bg-card/50 shrink-0">
-          <MarketSessionBadge />
-        </div>
-        <main className="flex-1 overflow-y-auto p-4 md:p-6 safe-bottom">
-          {children}
+        <main className="flex-1 overflow-y-auto safe-bottom">
+          {/* Mobile-only market session strip — scrolls with page content
+              so it doesn't take up persistent vertical space */}
+          <div className="md:hidden flex justify-center px-4 py-1.5 border-b border-border/50 bg-card/50">
+            <MarketSessionBadge />
+          </div>
+          <div className="p-4 md:p-6">
+            {children}
+          </div>
         </main>
       </div>
       {/* Bottom nav — mobile only */}
