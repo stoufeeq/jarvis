@@ -186,6 +186,13 @@ export const calendarApi = {
   upcoming: (params?: { days_ahead?: number; portfolio_only?: boolean; types?: string[] }) =>
     api.get("/calendar/", { params }),
   refresh: () => api.post("/calendar/refresh"),
+  exportIcsUrl: (params?: { days_ahead?: number; portfolio_only?: boolean }) => {
+    const base = (process.env.NEXT_PUBLIC_API_URL ?? "").replace(/\/$/, "");
+    const qs = new URLSearchParams();
+    if (params?.days_ahead) qs.set("days_ahead", String(params.days_ahead));
+    if (params?.portfolio_only) qs.set("portfolio_only", "true");
+    return `${base}/api/v1/calendar/export.ics${qs.toString() ? "?" + qs.toString() : ""}`;
+  },
 };
 
 export const briefingApi = {

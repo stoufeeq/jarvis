@@ -472,6 +472,11 @@ export interface CalendarEvent {
   title: string;
   details: string | null;
   in_portfolio: boolean;
+  // Optional IV analytics — populated only on earnings within ~30 days
+  atm_iv?: number | null;
+  hv_20?: number | null;
+  iv_hv_ratio?: number | null;
+  implied_move_pct?: number | null;
 }
 
 export interface InsiderTradeDetail {

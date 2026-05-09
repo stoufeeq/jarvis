@@ -25,8 +25,13 @@ from app.models.calendar_event import CalendarEvent, CalendarEventType
 from app.models.portfolio import Portfolio, Position
 from app.models.signal import Signal, SignalType
 from app.models.watchlist import Watchlist, WatchlistItem
+from app.services.options_analytics import OptionsAnalyticsService
 
 log = logging.getLogger(__name__)
+
+# Earnings within this many days get IV/HV analytics attached so the
+# UI can flag IV crush risk without a separate fetch per ticker.
+IV_LOOKAHEAD_DAYS = 30
 
 
 class CalendarService:
@@ -81,14 +86,33 @@ class CalendarService:
                     ).order_by(CalendarEvent.event_date.asc())
                 )
                 for e in result.scalars().all():
-                    events.append({
+                    item: dict[str, Any] = {
                         "type": e.event_type.value,
                         "ticker": e.ticker,
                         "date": e.event_date.isoformat(),
                         "title": e.title,
                         "details": e.details,
                         "in_portfolio": e.ticker in port_tickers,
-                    })
+                    }
+                    events.append(item)
+
+        # Attach IV/HV analytics to upcoming earnings within IV_LOOKAHEAD_DAYS.
+        # OptionsAnalyticsService has its own 15-min cache so this is cheap on
+        # repeat requests. Failures (no listed options, no IV data) are silent.
+        iv_cutoff = today + timedelta(days=IV_LOOKAHEAD_DAYS)
+        earnings_to_enrich = [
+            e for e in events
+            if e["type"] == "earnings" and date.fromisoformat(e["date"]) <= iv_cutoff
+        ]
+        for e in earnings_to_enrich:
+            try:
+                iv = await OptionsAnalyticsService.get_iv_summary(e["ticker"])
+                if iv:
+                    e["iv_hv_ratio"] = iv.get("iv_hv_ratio")
+                    e["implied_move_pct"] = iv.get("implied_move_pct")
+                    e["atm_iv"] = iv.get("atm_iv")
+            except Exception as exc:
+                log.debug("IV enrich failed for %s: %s", e["ticker"], exc)
 
         # 2. Macro events from signals table (no per-ticker filter — relevant to all)
         if not type_filter or "macro" in type_filter:
