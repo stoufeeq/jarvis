@@ -11,7 +11,14 @@ router = APIRouter(prefix="/market", tags=["market"])
 @router.get("/quote/{ticker}")
 async def get_quote(ticker: str, _: User = Depends(get_current_user)):
     """Latest price, change, volume for a ticker."""
-    return await MarketDataService().get_quote(ticker.upper())
+    from fastapi import HTTPException as _HTTPException
+    try:
+        return await MarketDataService().get_quote(ticker.upper())
+    except ValueError as exc:
+        # Invalid/unknown ticker — user input issue, not a server bug.
+        # 404 + raised HTTPException is recognised by Sentry middleware
+        # and not reported as an unhandled exception.
+        raise _HTTPException(status_code=404, detail=str(exc))
 
 
 @router.get("/quotes")

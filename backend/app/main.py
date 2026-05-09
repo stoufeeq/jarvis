@@ -23,12 +23,28 @@ if _SENTRY_DSN:
         from sentry_sdk.integrations.fastapi import FastApiIntegration
         from sentry_sdk.integrations.starlette import StarletteIntegration
 
+        def _before_send(event, hint):
+            """Filter out noise: HTTPException raises (which become 4xx
+            responses) and yfinance/network ValueErrors that come from
+            user-supplied invalid tickers."""
+            exc_info = hint.get("exc_info")
+            if exc_info:
+                exc = exc_info[1]
+                # Don't capture 4xx HTTP exceptions — they're user errors
+                from fastapi import HTTPException
+                from starlette.exceptions import HTTPException as StarletteHTTPException
+                if isinstance(exc, (HTTPException, StarletteHTTPException)):
+                    if 400 <= getattr(exc, "status_code", 500) < 500:
+                        return None
+            return event
+
         sentry_sdk.init(
             dsn=_SENTRY_DSN,
             environment=settings.app_env,
             release=os.environ.get("GIT_SHA", "unknown")[:8],
             traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
             send_default_pii=False,
+            before_send=_before_send,
             integrations=[
                 StarletteIntegration(transaction_style="endpoint"),
                 FastApiIntegration(transaction_style="endpoint"),
