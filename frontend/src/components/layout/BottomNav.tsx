@@ -11,6 +11,7 @@ import {
   Wallet,
   LayoutGrid,
   Newspaper,
+  CalendarDays,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +22,7 @@ const NAV = [
   { href: "/accounts", label: "Accounts", icon: Wallet },
   { href: "/watchlist", label: "Watchlist", icon: BookOpen },
   { href: "/signals", label: "Signals", icon: TrendingUp },
+  { href: "/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/heatmap", label: "Heatmap", icon: LayoutGrid },
   { href: "/alerts", label: "Alerts", icon: Bell },
 ];

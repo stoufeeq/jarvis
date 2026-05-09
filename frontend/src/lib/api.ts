@@ -182,6 +182,12 @@ export const watchlistApi = {
     api.delete(`/watchlists/${id}/items/${ticker}`),
 };
 
+export const calendarApi = {
+  upcoming: (params?: { days_ahead?: number; portfolio_only?: boolean; types?: string[] }) =>
+    api.get("/calendar/", { params }),
+  refresh: () => api.post("/calendar/refresh"),
+};
+
 export const briefingApi = {
   today: () => api.get("/briefing/today"),
   regenerate: () => api.post("/briefing/regenerate"),

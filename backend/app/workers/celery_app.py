@@ -17,6 +17,7 @@ celery_app = Celery(
         "app.workers.tasks.eightk_fetch",
         "app.workers.tasks.heatmap_warm",
         "app.workers.tasks.signal_outcome",
+        "app.workers.tasks.calendar_refresh",
     ],
 )
 
@@ -80,5 +81,10 @@ celery_app.conf.beat_schedule = {
     "snapshot-signal-outcomes": {
         "task": "app.workers.tasks.signal_outcome.snapshot_signal_outcomes",
         "schedule": crontab(hour=22, minute=0),
+    },
+    # Refresh upcoming earnings + ex-dividend dates once daily at 3:00 AM UTC.
+    "refresh-calendar": {
+        "task": "app.workers.tasks.calendar_refresh.refresh_calendar_events",
+        "schedule": crontab(hour=3, minute=0),
     },
 }

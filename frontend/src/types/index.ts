@@ -465,6 +465,15 @@ export interface NewsItemDetail {
   published_at: string | null;
 }
 
+export interface CalendarEvent {
+  type: "earnings" | "ex_dividend" | "macro";
+  ticker: string | null;
+  date: string;        // ISO YYYY-MM-DD
+  title: string;
+  details: string | null;
+  in_portfolio: boolean;
+}
+
 export interface InsiderTradeDetail {
   id: number;
   insider_name: string;

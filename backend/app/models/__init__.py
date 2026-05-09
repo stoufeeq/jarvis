@@ -1,4 +1,5 @@
 from app.models.alert import Alert
+from app.models.calendar_event import CalendarEvent
 from app.models.conversation import ChatMessage, Conversation
 from app.models.insider_trade import InsiderTrade
 from app.models.news import NewsItem
@@ -22,4 +23,5 @@ __all__ = [
     "InsiderTrade",
     "Conversation",
     "ChatMessage",
+    "CalendarEvent",
 ]
