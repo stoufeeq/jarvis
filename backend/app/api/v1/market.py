@@ -175,6 +175,32 @@ async def get_options_flow(ticker: str, _: User = Depends(get_current_user)):
         raise _HTTPException(status_code=502, detail=f"Options data unavailable: {exc}")
 
 
+@router.get("/session")
+async def get_market_session(_: User = Depends(get_current_user)):
+    """US equity market session state for the header badge.
+
+    Returns ISO timestamps so the frontend can compute countdowns locally
+    using the user's clock between polls."""
+    from app.services.market_session import MarketSession
+
+    s = MarketSession()
+    next_open_dt = s.next_trading_day()
+    today_close_dt = s.now_et.replace(hour=16, minute=0, second=0, microsecond=0) if s.is_trading_day else None
+    today_pre_open_dt = s.now_et.replace(hour=9, minute=30, second=0, microsecond=0) if s.is_trading_day else None
+
+    return {
+        "state": s.state,
+        "is_trading_day": s.is_trading_day,
+        "is_weekend": s.is_weekend,
+        "is_holiday": s.is_holiday,
+        "current_et": s.now_et.isoformat(),
+        "next_open": next_open_dt.isoformat(),
+        "todays_close": today_close_dt.isoformat() if today_close_dt else None,
+        "todays_open": today_pre_open_dt.isoformat() if today_pre_open_dt else None,
+        "description": s.describe(),
+    }
+
+
 @router.get("/details/{ticker}")
 async def get_stock_details(ticker: str, _: User = Depends(get_current_user)):
     """Comprehensive stock details — quote, valuation, growth, technicals,

@@ -106,6 +106,7 @@ export const marketApi = {
   fx: (from: string, to: string) => api.get("/market/fx", { params: { from, to } }),
   optionsFlow: (ticker: string) => api.get(`/market/options/${ticker}`),
   heatmap: () => api.get("/market/heatmap"),
+  session: () => api.get("/market/session"),
   details: (ticker: string) => api.get(`/market/details/${ticker}`),
   detailsNews: (ticker: string, limit = 15) =>
     api.get(`/market/details/${ticker}/news`, { params: { limit } }),

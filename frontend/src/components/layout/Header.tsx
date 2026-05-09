@@ -9,6 +9,7 @@ import { useAuthStore } from "@/store/auth";
 import { useTradingModeStore } from "@/store/tradingMode";
 import { NotificationBell } from "@/components/ui/NotificationBell";
 import { StockSearchModal } from "@/components/ui/StockSearchModal";
+import { MarketSessionBadge } from "@/components/ui/MarketSessionBadge";
 
 export function Header() {
   const user = useAuthStore((s) => s.user);
@@ -40,16 +41,18 @@ export function Header() {
 
   return (
     <header className="shrink-0 flex items-center justify-between gap-3 px-4 md:px-6 border-b border-border bg-card" style={{ paddingTop: "env(safe-area-inset-top)", minHeight: "calc(3.5rem + env(safe-area-inset-top))" }}>
-      {/* Logo — visible on mobile where sidebar is hidden */}
-      <Image
-        src="/logo.png"
-        alt="Jarvis"
-        width={100}
-        height={28}
-        className="object-contain md:hidden logo-adaptive"
-        priority
-      />
-      <div className="hidden md:block" /> {/* spacer on desktop */}
+      {/* Left side: logo (mobile) + market session badge */}
+      <div className="flex items-center gap-3 min-w-0">
+        <Image
+          src="/logo.png"
+          alt="Jarvis"
+          width={100}
+          height={28}
+          className="object-contain md:hidden logo-adaptive shrink-0"
+          priority
+        />
+        <MarketSessionBadge />
+      </div>
       <div className="flex items-center gap-3">
         {/* Real / Paper trading mode toggle */}
         <div className="flex items-center gap-1 p-0.5 rounded-md bg-secondary/50 border border-border">
