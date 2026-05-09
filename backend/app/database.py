@@ -27,10 +27,20 @@ _in_worker = (
 #
 # In API context (uvicorn): keep the pool — single long-lived event loop, high
 # request throughput, pooling materially improves latency.
-_engine_kwargs: dict = {"echo": False, "pool_pre_ping": True}
-if _in_worker:
+#
+# SQLite (used for tests) doesn't accept pool_size/max_overflow — those args
+# are Postgres-specific. Detect the dialect and configure accordingly.
+_is_sqlite = "sqlite" in settings.database_url
+
+_engine_kwargs: dict = {"echo": False}
+if _is_sqlite:
+    # Pooling kwargs not valid for SQLite; tests provide their own engine anyway
+    pass
+elif _in_worker:
+    _engine_kwargs["pool_pre_ping"] = True
     _engine_kwargs["poolclass"] = NullPool
 else:
+    _engine_kwargs["pool_pre_ping"] = True
     _engine_kwargs["pool_size"] = 10
     _engine_kwargs["max_overflow"] = 20
 

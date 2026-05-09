@@ -73,14 +73,17 @@ jobs:
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
+        timeout-minutes: 20  # bumped from default 10m — slow image pulls have caused timeouts
         env:
           GH_USER: ${{ github.actor }}
           GH_TOKEN: ${{ secrets.GHCR_PAT }}
+          GIT_SHA: ${{ github.sha }}
         with:
           host: ${{ secrets.HETZNER_HOST }}
           username: root
           key: ${{ secrets.HETZNER_SSH_KEY }}
-          envs: GH_USER,GH_TOKEN
+          envs: GH_USER,GH_TOKEN,GIT_SHA
+          command_timeout: 18m
           script: |
             # Log in to GHCR on the server
             echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_USER" --password-stdin
@@ -97,13 +100,46 @@ jobs:
             docker run --rm --network jarvis_default --env-file backend/.env \
               ghcr.io/stoufeeq/jarvis-backend:latest alembic upgrade head
 
-            # Restart backend services using compose override
+            # Restart backend services using compose override.
+            # GIT_SHA is exported into the env so the running containers can
+            # report it from the health endpoint.
+            export GIT_SHA="$GIT_SHA"
             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate backend celery_worker celery_beat
 
-            # Restart frontend
+            # Restart frontend (pass GIT_SHA for Sentry release tagging if enabled)
             docker stop jarvis-frontend 2>/dev/null || true
             docker rm jarvis-frontend 2>/dev/null || true
-            docker run -d --name jarvis-frontend --restart unless-stopped -p 3000:3000 ghcr.io/stoufeeq/jarvis-frontend:latest
+            docker run -d --name jarvis-frontend --restart unless-stopped \
+              -e GIT_SHA="$GIT_SHA" \
+              -p 3000:3000 ghcr.io/stoufeeq/jarvis-frontend:latest
 
             # Clean up old images
             docker image prune -f
+
+      - name: Verify deploy is live
+        env:
+          HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          # Poll the backend health endpoint up to 60s waiting for the new
+          # version to come online. Fails the workflow if version doesn't
+          # match the just-deployed commit SHA — catches stale deploys
+          # where containers run but with old code.
+          EXPECTED_SHA="${GIT_SHA:0:8}"
+          echo "Expecting health endpoint to report SHA: $EXPECTED_SHA"
+
+          for i in $(seq 1 12); do
+            sleep 5
+            RESP=$(curl -fsS --max-time 8 "http://${HETZNER_HOST}:8002/health" 2>/dev/null || echo '{}')
+            ACTUAL=$(echo "$RESP" | python3 -c "import sys, json; print(json.load(sys.stdin).get('git_sha', ''))" 2>/dev/null || echo "")
+            echo "Attempt $i — backend reports: $ACTUAL"
+            if [ "$ACTUAL" = "$EXPECTED_SHA" ]; then
+              echo "✓ Deploy verified — backend is on $EXPECTED_SHA"
+              # Deep health check
+              DEEP=$(curl -fsS --max-time 15 "http://${HETZNER_HOST}:8002/health?deep=true")
+              echo "Deep health: $DEEP"
+              exit 0
+            fi
+          done
+          echo "::error::Deploy verification failed — backend not reporting expected SHA after 60s"
+          exit 1
