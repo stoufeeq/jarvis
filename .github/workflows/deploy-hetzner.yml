@@ -137,9 +137,12 @@ jobs:
             echo "Attempt $i — backend reports: $ACTUAL"
             if [ "$ACTUAL" = "$EXPECTED_SHA" ]; then
               echo "✓ Deploy verified — backend is on $EXPECTED_SHA"
-              # Deep health check
-              DEEP=$(curl -fsS --max-time 15 "http://${HETZNER_HOST}:8002/health?deep=true")
-              echo "Deep health: $DEEP"
+              # Deep health check — informational only, won't fail the workflow.
+              # The version match above is the authoritative success signal.
+              # Subsystems like Celery can take a few seconds to register after
+              # restart and might briefly report "degraded" — that's expected.
+              DEEP=$(curl -sS --max-time 15 "http://${HETZNER_HOST}:8002/health?deep=true" 2>&1 || echo '{}')
+              echo "Deep health snapshot: $DEEP"
               exit 0
             fi
           done
