@@ -61,6 +61,8 @@ jobs:
           push: true
           build-args: |
             NEXT_PUBLIC_API_URL=http://${{ secrets.HETZNER_HOST }}:8002
+            NEXT_PUBLIC_SENTRY_DSN=${{ secrets.NEXT_PUBLIC_SENTRY_DSN }}
+            NEXT_PUBLIC_GIT_SHA=${{ github.sha }}
           tags: |
             ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
             ${{ env.FRONTEND_IMAGE }}:latest
