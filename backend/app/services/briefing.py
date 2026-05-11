@@ -588,23 +588,62 @@ Include up to 5 portfolio items, 5 watchlist opportunities, and 3 S&P 500 opport
         try:
             import google.generativeai as genai
             genai.configure(api_key=settings.gemini_api_key)
-            model = genai.GenerativeModel(settings.gemini_model)
-            response = model.generate_content(prompt)
-            raw = response.text.strip()
+            # Force structured JSON output — drastically reduces malformed
+            # responses vs free-form prompting. Available since Gemini 1.5+.
+            model = genai.GenerativeModel(
+                settings.gemini_model,
+                generation_config={"response_mime_type": "application/json"},
+            )
 
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-            raw = raw.strip()
+            # Retry once on JSON parse failure — covers the rare case where
+            # Gemini still emits malformed output even in JSON mode.
+            last_error: str | None = None
+            for attempt in (1, 2):
+                response = model.generate_content(prompt)
+                raw = (response.text or "").strip()
 
-            return json.loads(raw)
-        except json.JSONDecodeError as exc:
-            log.error("Gemini returned invalid JSON for briefing: %s", exc)
-            return self._fallback_content(f"JSON parse error: {exc}")
+                # Strip markdown code fences if present (belt-and-braces)
+                if raw.startswith("```"):
+                    raw = raw.split("```")[1]
+                    if raw.startswith("json"):
+                        raw = raw[4:]
+                raw = raw.strip()
+
+                parsed = self._parse_json_with_repair(raw)
+                if parsed is not None:
+                    if attempt == 2:
+                        log.info("Briefing JSON parse succeeded on retry attempt 2")
+                    return parsed
+
+                last_error = "could not parse Gemini JSON output"
+                log.warning(
+                    "Briefing JSON parse failed (attempt %d). First 500 chars: %s",
+                    attempt, raw[:500],
+                )
+
+            return self._fallback_content(f"JSON parse error after retry: {last_error}")
         except Exception as exc:
             log.error("Gemini briefing call failed: %s", exc)
             return self._fallback_content(str(exc))
+
+    @staticmethod
+    def _parse_json_with_repair(raw: str) -> dict | None:
+        """Try strict JSON parse first; fall back to json_repair which handles
+        common LLM output issues (missing commas, trailing commas, unescaped
+        quotes/newlines). Returns None if both fail."""
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            pass
+        try:
+            from json_repair import repair_json
+            repaired = repair_json(raw, return_objects=True)
+            if isinstance(repaired, dict) and repaired:
+                log.info("Briefing JSON required repair — succeeded")
+                return repaired
+        except Exception as exc:
+            log.warning("json_repair fallback also failed: %s", exc)
+        return None
 
     @staticmethod
     def _fallback_content(error: str) -> dict:

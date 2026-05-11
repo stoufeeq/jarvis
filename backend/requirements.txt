@@ -37,6 +37,7 @@ httpx==0.27.2
 
 # ── AI ───────────────────────────────────────────────────────────────────────
 google-generativeai==0.8.3
+json-repair==0.30.0           # Repairs common LLM JSON output issues (missing commas, unescaped chars)
 
 # ── Observability (optional — only initializes if SENTRY_DSN is set) ────────
 sentry-sdk[fastapi]==2.13.0
