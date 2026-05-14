@@ -548,14 +548,17 @@ export default function HeatmapPage() {
 
       {/* ── Bubbles tab ───────────────────────────────────────────────────────── */}
       {data && tab === "bubbles" && (
-        <div className="flex-1 min-h-0 rounded-xl border border-border bg-card p-4">
-          <div className="text-xs text-muted-foreground mb-2 flex gap-4">
+        <div className="flex-1 min-h-0 rounded-xl border border-border bg-card p-4 flex flex-col">
+          <div className="text-xs text-muted-foreground mb-2 flex gap-4 shrink-0">
             <span>X: Day change %</span>
             <span>Y: Relative volume (today ÷ 20-day avg)</span>
             <span>Size: Index weight</span>
           </div>
-          <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 10, right: 20, bottom: 30, left: 10 }}>
+          {/* min-h-0 stops ResponsiveContainer from pushing the parent
+              taller every render and growing without bound. */}
+          <div className="flex-1 min-h-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <ScatterChart margin={{ top: 10, right: 20, bottom: 30, left: 10 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
               <XAxis
                 type="number"
@@ -586,8 +589,9 @@ export default function HeatmapPage() {
                   isAnimationActive={false}
                 />
               ))}
-            </ScatterChart>
-          </ResponsiveContainer>
+              </ScatterChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       )}
     </div>
