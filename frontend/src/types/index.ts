@@ -465,6 +465,65 @@ export interface NewsItemDetail {
   published_at: string | null;
 }
 
+export type AllocationMode = "fixed" | "percent";
+export type StrategyTradeStatus = "open" | "closed";
+export type StrategyExitReason =
+  | "planned"
+  | "opposite_signal"
+  | "max_hold"
+  | "panic_close"
+  | "manual";
+
+export interface Strategy {
+  id: number;
+  user_id: number;
+  portfolio_id: number;
+  name: string;
+  description: string | null;
+  signal_type: string | null;
+  direction: "bullish" | "bearish" | "neutral" | null;
+  min_strength: number;
+  tickers: string | null;
+  allocation_mode: AllocationMode;
+  allocation_value: number;
+  max_position_pct: number;
+  min_cash_reserve: number;
+  min_hold_days: number;
+  base_hold_days: number;
+  max_hold_days: number;
+  exit_on_opposite_signal: boolean;
+  extend_on_continuing_signal: boolean;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface StrategyTradeDetail {
+  id: number;
+  strategy_id: number;
+  ticker: string;
+  direction: "bullish" | "bearish" | "neutral";
+  buy_trade_id: number | null;
+  sell_trade_id: number | null;
+  trigger_signal_id: number | null;
+  entry_price: number;
+  exit_price: number | null;
+  quantity: number;
+  entry_at: string;
+  planned_exit_at: string;
+  exited_at: string | null;
+  status: StrategyTradeStatus;
+  exit_reason: StrategyExitReason | null;
+}
+
+export interface StrategyStats {
+  open_count: number;
+  closed_count: number;
+  total_pnl: number;
+  win_count: number;
+  loss_count: number;
+  win_rate_pct: number | null;
+}
+
 export interface CalendarEvent {
   type: "earnings" | "ex_dividend" | "macro";
   ticker: string | null;

@@ -182,6 +182,18 @@ export const watchlistApi = {
     api.delete(`/watchlists/${id}/items/${ticker}`),
 };
 
+export const strategiesApi = {
+  list: () => api.get("/strategies/"),
+  get: (id: number) => api.get(`/strategies/${id}`),
+  create: (data: object) => api.post("/strategies/", data),
+  update: (id: number, data: object) => api.patch(`/strategies/${id}`, data),
+  delete: (id: number) => api.delete(`/strategies/${id}`),
+  trades: (id: number, status?: string) =>
+    api.get(`/strategies/${id}/trades`, { params: status ? { status } : {} }),
+  stats: (id: number) => api.get(`/strategies/${id}/stats`),
+  panicClose: (id: number) => api.post(`/strategies/${id}/panic-close`),
+};
+
 export const calendarApi = {
   upcoming: (params?: { days_ahead?: number; portfolio_only?: boolean; types?: string[] }) =>
     api.get("/calendar/", { params }),

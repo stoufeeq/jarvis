@@ -18,6 +18,7 @@ celery_app = Celery(
         "app.workers.tasks.heatmap_warm",
         "app.workers.tasks.signal_outcome",
         "app.workers.tasks.calendar_refresh",
+        "app.workers.tasks.auto_trader",
     ],
 )
 
@@ -86,5 +87,11 @@ celery_app.conf.beat_schedule = {
     "refresh-calendar": {
         "task": "app.workers.tasks.calendar_refresh.refresh_calendar_events",
         "schedule": crontab(hour=3, minute=0),
+    },
+    # Auto-trader: daily exit sweep at 22:00 UTC. Closes strategy-owned
+    # positions whose planned_exit_at has passed or which hit max_hold_days.
+    "auto-trader-daily-exit-sweep": {
+        "task": "app.workers.tasks.auto_trader.daily_exit_sweep",
+        "schedule": crontab(hour=22, minute=15),  # 15min after signal outcome sweep
     },
 }

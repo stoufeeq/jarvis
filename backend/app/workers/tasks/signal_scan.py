@@ -23,13 +23,30 @@ async def _scan_all_watchlist_tickers():
         tickers = [row[0] for row in result.all()]
 
         engine = SignalEngine(db)
+        all_new_signal_ids: list[int] = []
         for ticker in tickers:
             try:
-                await engine.scan_ticker(ticker)
+                signals = await engine.scan_ticker(ticker)
+                all_new_signal_ids.extend(s.id for s in signals if s.id)
             except Exception:
                 pass  # log and continue
 
         await db.commit()
+
+        # Auto-trader: process new signals against active strategies.
+        # Done after the commit so signal rows are fully persisted.
+        if all_new_signal_ids:
+            from app.services.auto_trader import AutoTraderService
+            try:
+                counts = await AutoTraderService(db).process_new_signals(all_new_signal_ids)
+                if any(counts.values()):
+                    import logging
+                    logging.getLogger("jarvis").info("Auto-trader: %s", counts)
+                await db.commit()
+            except Exception:
+                # Auto-trader failures must never break signal scanning
+                import logging
+                logging.getLogger("jarvis").exception("Auto-trader failed")
 
 
 @celery_app.task(name="app.workers.tasks.signal_scan.scan_ticker")
@@ -40,5 +57,14 @@ def scan_ticker(ticker: str):
 async def _scan_ticker(ticker: str):
     async with AsyncSessionLocal() as db:
         engine = SignalEngine(db)
-        await engine.scan_ticker(ticker.upper())
+        signals = await engine.scan_ticker(ticker.upper())
         await db.commit()
+        # Same auto-trader hook for on-demand scans
+        if signals:
+            from app.services.auto_trader import AutoTraderService
+            try:
+                await AutoTraderService(db).process_new_signals([s.id for s in signals if s.id])
+                await db.commit()
+            except Exception:
+                import logging
+                logging.getLogger("jarvis").exception("Auto-trader failed")
