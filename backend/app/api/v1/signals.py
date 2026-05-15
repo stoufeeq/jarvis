@@ -148,3 +148,21 @@ async def backfill_outcomes(
     from app.workers.tasks.signal_outcome import backfill_signal_outcomes
     task = backfill_signal_outcomes.delay(limit)
     return {"task_id": task.id, "status": "dispatched"}
+
+
+@router.post("/outcomes/refresh-snapshots", status_code=202)
+async def refresh_snapshot_prices(
+    force_refresh: bool = Query(
+        False,
+        description="If true, overwrite snapshots that are already populated. "
+                    "Use to scrub corrupted values written by the old current-quote job.",
+    ),
+    _: User = Depends(get_current_user),
+):
+    """Dispatch a Celery task to fill in missing 1d/5d/30d/90d snapshot
+    prices on existing signal_outcomes rows using historical close prices.
+    Idempotent. Pass force_refresh=true once to rewrite any existing
+    (possibly corrupted) snapshot values."""
+    from app.workers.tasks.signal_outcome import snapshot_signal_outcomes
+    task = snapshot_signal_outcomes.delay(force_refresh=force_refresh)
+    return {"task_id": task.id, "status": "dispatched", "force_refresh": force_refresh}

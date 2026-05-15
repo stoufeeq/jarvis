@@ -77,11 +77,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.heatmap_warm.warm_heatmap_cache",
         "schedule": 1800,  # every 30 minutes
     },
-    # Snapshot signal outcomes (1d/5d/30d/90d post-signal prices) once daily
-    # at 22:00 UTC — after US market close, prices have settled.
+    # Snapshot signal outcomes (1d/5d/30d/90d post-signal prices) every 6h.
+    # Snapshots are sourced from historical close prices so frequency only
+    # affects how fast the backlog drains, not correctness.
     "snapshot-signal-outcomes": {
         "task": "app.workers.tasks.signal_outcome.snapshot_signal_outcomes",
-        "schedule": crontab(hour=22, minute=0),
+        "schedule": crontab(hour="0,6,12,18", minute="30"),
     },
     # Refresh upcoming earnings + ex-dividend dates once daily at 3:00 AM UTC.
     "refresh-calendar": {

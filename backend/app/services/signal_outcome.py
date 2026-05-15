@@ -8,7 +8,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.signal import Signal
@@ -57,49 +57,109 @@ class SignalOutcomeService:
         self.db.add(outcome)
         return outcome
 
-    # ── Periodic snapshot job ──────────────────────────────────────────────────
+    # ── History-based snapshot fill (correct prices, handles backlog) ────────
 
-    async def snapshot_due_outcomes(self) -> dict[str, int]:
-        """Find outcomes whose next snapshot is due and fill in the price.
+    async def refresh_snapshots_from_history(
+        self,
+        force_refresh: bool = False,
+        chunk_size: int = 1000,
+    ) -> dict[str, int]:
+        """Fill in missing 1d/5d/30d/90d snapshots using historical close prices.
 
-        Returns counts of snapshots taken per interval.
+        Looks up the close price for `signal_created_at + N days` from
+        yfinance daily candles. Correct even when the job is many weeks
+        behind — the prior implementation wrote the current quote, which
+        was only correct when the snapshot ran on the same day the cutoff
+        occurred.
+
+        Args:
+            force_refresh: if True, also overwrite snapshots that were already
+                populated. Use once to scrub stale-quote values out of the
+                table after upgrading from the old job.
+            chunk_size: max outcomes loaded per DB round-trip per ticker.
         """
         now = datetime.now(UTC)
         counts = {"1d": 0, "5d": 0, "30d": 0, "90d": 0}
 
-        # For each interval, find rows where:
-        #   signal_created_at + N days <= now
-        #   AND price_Nd IS NULL
-        for label, days in SNAPSHOT_INTERVALS.items():
-            cutoff = now - timedelta(days=days)
-            price_col = getattr(SignalOutcome, f"price_{label}")
+        # Find tickers with at least one due-and-missing snapshot (or any
+        # outcome at all, when force_refresh is on).
+        ticker_query = select(SignalOutcome.ticker).distinct()
+        if not force_refresh:
+            conditions = []
+            for label, days in SNAPSHOT_INTERVALS.items():
+                cutoff = now - timedelta(days=days)
+                price_col = getattr(SignalOutcome, f"price_{label}")
+                conditions.append(and_(
+                    SignalOutcome.signal_created_at <= cutoff,
+                    price_col.is_(None),
+                ))
+            ticker_query = ticker_query.where(or_(*conditions))
 
-            result = await self.db.execute(
-                select(SignalOutcome).where(
-                    and_(
-                        SignalOutcome.signal_created_at <= cutoff,
-                        price_col.is_(None),
-                    )
-                ).limit(500)  # cap per run to avoid long-running tasks
-            )
-            outcomes = list(result.scalars().all())
-            if not outcomes:
+        tickers = list((await self.db.execute(ticker_query)).scalars().all())
+        if not tickers:
+            return counts
+
+        mds = MarketDataService()
+        for ticker in tickers:
+            try:
+                # 1y covers all snapshot intervals up to 90d for signals from
+                # the past 9 months.
+                resp = await mds.get_history(ticker, period="1y", interval="1d")
+                candles = resp.get("candles", []) if isinstance(resp, dict) else []
+            except Exception as exc:
+                log.warning("Snapshot fill: history fetch failed for %s: %s", ticker, exc)
+                continue
+            if not candles:
                 continue
 
-            # Batch by ticker to avoid duplicate quote fetches
-            unique_tickers = list({o.ticker for o in outcomes})
-            quotes = await MarketDataService().get_quotes(unique_tickers)
-            price_map = {q["ticker"]: q.get("price") for q in quotes if q.get("price")}
+            by_date = {self._candle_date(c): c for c in candles}
 
-            for o in outcomes:
-                price = price_map.get(o.ticker)
-                if price is None or price <= 0:
-                    continue
-                setattr(o, f"price_{label}", Decimal(str(price)))
-                setattr(o, f"snapshot_{label}_at", now)
-                counts[label] += 1
+            # Cursor-based pagination on id — offset scans are slow on big tables.
+            last_id = 0
+            while True:
+                q = (
+                    select(SignalOutcome)
+                    .where(and_(
+                        SignalOutcome.ticker == ticker,
+                        SignalOutcome.id > last_id,
+                    ))
+                    .order_by(SignalOutcome.id)
+                    .limit(chunk_size)
+                )
+                outcomes = list((await self.db.execute(q)).scalars().all())
+                if not outcomes:
+                    break
+                last_id = outcomes[-1].id
 
-            await self.db.flush()
+                for o in outcomes:
+                    created_dt = o.signal_created_at
+                    for label, days in SNAPSHOT_INTERVALS.items():
+                        already = getattr(o, f"price_{label}") is not None
+                        target_dt = created_dt + timedelta(days=days)
+
+                        # Not enough time elapsed for this snapshot to exist.
+                        if target_dt > now:
+                            if force_refresh and already:
+                                # Wipe any stale-quote value written by the old job.
+                                setattr(o, f"price_{label}", None)
+                                setattr(o, f"snapshot_{label}_at", None)
+                            continue
+
+                        if already and not force_refresh:
+                            continue
+
+                        target_date = target_dt.date().isoformat()
+                        candle = by_date.get(target_date) or self._closest_after(target_date, by_date)
+                        if not candle:
+                            continue
+                        close = candle.get("close")
+                        if not close or close <= 0:
+                            continue
+                        setattr(o, f"price_{label}", Decimal(str(close)))
+                        setattr(o, f"snapshot_{label}_at", target_dt)
+                        counts[label] += 1
+
+                await self.db.commit()
 
         return counts
 
