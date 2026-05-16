@@ -258,62 +258,96 @@ class SignalOutcomeService:
     async def get_performance_stats(self) -> dict:
         """Aggregate outcome data into hit-rate and avg-gain stats.
 
-        Returns dict with:
-          - by_signal_type: {type: {timeframe: {hit_rate, avg_gain_pct, sample_size}}}
-          - by_direction:   {direction: {timeframe: {...}}}
-          - by_strength:    {strength: {timeframe: {...}}}
-          - overall:        {timeframe: {...}}
+        Computed in SQL — never loads the outcomes table into Python.
+        Returns the same shape as before so the frontend doesn't need to change.
         """
-        result = await self.db.execute(select(SignalOutcome))
-        outcomes = list(result.scalars().all())
+        from sqlalchemy import text
 
-        by_type: dict[str, dict[str, list[float]]]      = {}
-        by_direction: dict[str, dict[str, list[float]]] = {}
-        by_strength: dict[int, dict[str, list[float]]]  = {}
-        overall: dict[str, list[float]]                 = {tf: [] for tf in SNAPSHOT_INTERVALS}
+        # One row per (signal_type, direction, strength) cell, with n/hits/
+        # sum_pct columns for each timeframe. Neutral signals are excluded
+        # because direction-adjusted gain isn't defined for them.
+        clauses: list[str] = []
+        for label in SNAPSHOT_INTERVALS:
+            price = f"price_{label}"
+            clauses.append(f"""
+                COUNT(*) FILTER (WHERE {price} IS NOT NULL AND entry_price > 0) AS n_{label},
+                COUNT(*) FILTER (
+                    WHERE {price} IS NOT NULL AND entry_price > 0 AND (
+                        (direction::text = 'bullish' AND {price} > entry_price) OR
+                        (direction::text = 'bearish' AND {price} < entry_price)
+                    )
+                ) AS hits_{label},
+                COALESCE(SUM(
+                    CASE WHEN {price} IS NOT NULL AND entry_price > 0 THEN
+                        CASE direction::text
+                            WHEN 'bullish' THEN ({price} - entry_price) / entry_price * 100
+                            WHEN 'bearish' THEN (entry_price - {price}) / entry_price * 100
+                        END
+                    ELSE 0 END
+                ), 0) AS sum_pct_{label}
+            """)
 
-        for o in outcomes:
-            entry = float(o.entry_price)
-            if entry <= 0:
-                continue
+        sql = text(f"""
+            SELECT
+                signal_type::text AS signal_type,
+                direction::text   AS direction,
+                strength,
+                {",".join(clauses)}
+            FROM signal_outcomes
+            WHERE direction::text IN ('bullish', 'bearish')
+              AND entry_price > 0
+            GROUP BY signal_type, direction, strength
+        """)
+        rows = (await self.db.execute(sql)).all()
+
+        # Marginalize over (type, direction, strength) into the four buckets.
+        by_type: dict[str, dict[str, dict]]      = {}
+        by_direction: dict[str, dict[str, dict]] = {}
+        by_strength: dict[str, dict[str, dict]]  = {}
+        overall: dict[str, dict]                 = {tf: {"n": 0, "hits": 0, "sum_pct": 0.0} for tf in SNAPSHOT_INTERVALS}
+
+        def bump(bucket: dict, key: str, tf: str, n: int, hits: int, sum_pct: float) -> None:
+            cell = bucket.setdefault(key, {}).setdefault(tf, {"n": 0, "hits": 0, "sum_pct": 0.0})
+            cell["n"] += n
+            cell["hits"] += hits
+            cell["sum_pct"] += sum_pct
+
+        total_outcomes = 0
+        for row in rows:
             for tf in SNAPSHOT_INTERVALS:
-                price = getattr(o, f"price_{tf}")
-                if price is None:
+                n = int(getattr(row, f"n_{tf}") or 0)
+                hits = int(getattr(row, f"hits_{tf}") or 0)
+                sum_pct = float(getattr(row, f"sum_pct_{tf}") or 0)
+                if n == 0:
                     continue
-                price_f = float(price)
-                pct = (price_f - entry) / entry * 100
-                # For bearish, invert: a price drop is a "hit"
-                if o.direction.value == "bearish":
-                    pct = -pct
-                # neutral signals have no direction — skip from aggregates
-                if o.direction.value == "neutral":
-                    continue
+                overall[tf]["n"] += n
+                overall[tf]["hits"] += hits
+                overall[tf]["sum_pct"] += sum_pct
+                bump(by_type, row.signal_type, tf, n, hits, sum_pct)
+                bump(by_direction, row.direction, tf, n, hits, sum_pct)
+                bump(by_strength, str(row.strength), tf, n, hits, sum_pct)
+            # Approximate total_outcomes by max sample across timeframes for this cell.
+            total_outcomes += max(int(getattr(row, f"n_{tf}") or 0) for tf in SNAPSHOT_INTERVALS)
 
-                overall[tf].append(pct)
-                by_type.setdefault(o.signal_type.value, {}).setdefault(tf, []).append(pct)
-                by_direction.setdefault(o.direction.value, {}).setdefault(tf, []).append(pct)
-                by_strength.setdefault(o.strength, {}).setdefault(tf, []).append(pct)
-
-        def summarize(values: list[float]) -> dict:
-            n = len(values)
+        def summarize(cell: dict) -> dict:
+            n = cell["n"]
             if n == 0:
                 return {"hit_rate": None, "avg_gain_pct": None, "sample_size": 0}
-            hits = sum(1 for v in values if v > 0)
             return {
-                "hit_rate": round(hits / n * 100, 1),
-                "avg_gain_pct": round(sum(values) / n, 2),
+                "hit_rate": round(cell["hits"] / n * 100, 1),
+                "avg_gain_pct": round(cell["sum_pct"] / n, 2),
                 "sample_size": n,
             }
 
-        def summarize_dict(d: dict) -> dict:
-            return {tf: summarize(values) for tf, values in d.items()}
+        def summarize_bucket(d: dict) -> dict:
+            return {k: {tf: summarize(c) for tf, c in tfs.items()} for k, tfs in d.items()}
 
         return {
-            "overall":      {tf: summarize(values) for tf, values in overall.items()},
-            "by_signal_type":  {k: summarize_dict(v) for k, v in by_type.items()},
-            "by_direction":    {k: summarize_dict(v) for k, v in by_direction.items()},
-            "by_strength":     {str(k): summarize_dict(v) for k, v in by_strength.items()},
-            "total_outcomes":  len(outcomes),
+            "overall":         {tf: summarize(c) for tf, c in overall.items()},
+            "by_signal_type":  summarize_bucket(by_type),
+            "by_direction":    summarize_bucket(by_direction),
+            "by_strength":     summarize_bucket(by_strength),
+            "total_outcomes":  total_outcomes,
         }
 
     async def list_recent(self, limit: int = 50) -> list[SignalOutcome]:
