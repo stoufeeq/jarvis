@@ -5,6 +5,7 @@ computes performance statistics.
 """
 
 import logging
+import math
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -16,6 +17,21 @@ from app.models.signal_outcome import SignalOutcome
 from app.services.market_data import MarketDataService
 
 log = logging.getLogger(__name__)
+
+
+def _finite_or_none(value: float | int | None) -> float | None:
+    """Coerce to float and reject NaN / inf — yfinance occasionally returns
+    NaN closes for delisted tickers or holiday-bracketed dates."""
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(f) or f <= 0:
+        return None
+    return f
+
 
 # Days after signal_created_at when each snapshot is due
 SNAPSHOT_INTERVALS = {
@@ -40,8 +56,9 @@ class SignalOutcomeService:
         """
         if entry_price is None:
             entry_price = await self._fetch_current_price(signal.ticker)
-        if entry_price is None or entry_price <= 0:
-            log.debug("Skipping outcome row for %s — no entry price", signal.ticker)
+        entry_price = _finite_or_none(entry_price)
+        if entry_price is None:
+            log.debug("Skipping outcome row for %s — no finite entry price", signal.ticker)
             return None
 
         outcome = SignalOutcome(
@@ -152,8 +169,8 @@ class SignalOutcomeService:
                         candle = by_date.get(target_date) or self._closest_after(target_date, by_date)
                         if not candle:
                             continue
-                        close = candle.get("close")
-                        if not close or close <= 0:
+                        close = _finite_or_none(candle.get("close"))
+                        if close is None:
                             continue
                         setattr(o, f"price_{label}", Decimal(str(close)))
                         setattr(o, f"snapshot_{label}_at", target_dt)
@@ -220,8 +237,8 @@ class SignalOutcomeService:
                 entry_candle = by_date.get(entry_date) or self._closest_after(entry_date, by_date)
                 if not entry_candle:
                     continue
-                entry_price = entry_candle.get("close")
-                if not entry_price or entry_price <= 0:
+                entry_price = _finite_or_none(entry_candle.get("close"))
+                if entry_price is None:
                     continue
 
                 outcome = SignalOutcome(
@@ -242,8 +259,9 @@ class SignalOutcomeService:
                         continue
                     target_date = target_dt.date().isoformat()
                     candle = by_date.get(target_date) or self._closest_after(target_date, by_date)
-                    if candle and candle.get("close") and candle["close"] > 0:
-                        setattr(outcome, f"price_{label}", Decimal(str(candle["close"])))
+                    snap_close = _finite_or_none(candle.get("close")) if candle else None
+                    if snap_close is not None:
+                        setattr(outcome, f"price_{label}", Decimal(str(snap_close)))
                         setattr(outcome, f"snapshot_{label}_at", target_dt)
 
                 self.db.add(outcome)
@@ -266,19 +284,25 @@ class SignalOutcomeService:
         # One row per (signal_type, direction, strength) cell, with n/hits/
         # sum_pct columns for each timeframe. Neutral signals are excluded
         # because direction-adjusted gain isn't defined for them.
+        # In Postgres NUMERIC, NaN compares as GREATER than any other value.
+        # Older writers (yfinance occasionally returns NaN closes) stored NaN
+        # via Decimal('NaN'); they pass `> 0` checks and poison aggregates.
+        # `< 'NaN'::numeric` is TRUE only for finite values, so we use it to
+        # filter NaN out without disturbing legitimate price ranges.
         clauses: list[str] = []
         for label in SNAPSHOT_INTERVALS:
             price = f"price_{label}"
+            finite = f"({price} IS NOT NULL AND {price} > 0 AND {price} < 'NaN'::numeric)"
             clauses.append(f"""
-                COUNT(*) FILTER (WHERE {price} IS NOT NULL AND entry_price > 0) AS n_{label},
+                COUNT(*) FILTER (WHERE {finite}) AS n_{label},
                 COUNT(*) FILTER (
-                    WHERE {price} IS NOT NULL AND entry_price > 0 AND (
+                    WHERE {finite} AND (
                         (direction::text = 'bullish' AND {price} > entry_price) OR
                         (direction::text = 'bearish' AND {price} < entry_price)
                     )
                 ) AS hits_{label},
                 COALESCE(SUM(
-                    CASE WHEN {price} IS NOT NULL AND entry_price > 0 THEN
+                    CASE WHEN {finite} THEN
                         CASE direction::text
                             WHEN 'bullish' THEN ({price} - entry_price) / entry_price * 100
                             WHEN 'bearish' THEN (entry_price - {price}) / entry_price * 100
@@ -296,6 +320,7 @@ class SignalOutcomeService:
             FROM signal_outcomes
             WHERE direction::text IN ('bullish', 'bearish')
               AND entry_price > 0
+              AND entry_price < 'NaN'::numeric
             GROUP BY signal_type, direction, strength
         """)
         rows = (await self.db.execute(sql)).all()
