@@ -1,6 +1,7 @@
 from app.models.alert import Alert
 from app.models.calendar_event import CalendarEvent
 from app.models.conversation import ChatMessage, Conversation
+from app.models.halal_compliance import HalalCompliance
 from app.models.insider_trade import InsiderTrade
 from app.models.news import NewsItem
 from app.models.portfolio import Portfolio, Position, Trade
@@ -27,4 +28,5 @@ __all__ = [
     "CalendarEvent",
     "Strategy",
     "StrategyTrade",
+    "HalalCompliance",
 ]

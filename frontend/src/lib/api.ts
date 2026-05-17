@@ -207,6 +207,11 @@ export const calendarApi = {
   },
 };
 
+export const halalApi = {
+  one: (ticker: string) => api.get(`/halal/${ticker}`),
+  many: (tickers: string[]) => api.get("/halal/", { params: { tickers } }),
+};
+
 export const briefingApi = {
   today: () => api.get("/briefing/today"),
   regenerate: () => api.post("/briefing/regenerate"),

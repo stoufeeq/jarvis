@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { authApi } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
+import { useSettingsStore } from "@/store/settings";
 import { useThemeStore, THEMES } from "@/store/theme";
 import toast from "react-hot-toast";
 
@@ -12,6 +13,10 @@ export default function SettingsPage() {
   const setUser = useAuthStore((s) => s.setUser);
   const theme = useThemeStore((s) => s.theme);
   const setTheme = useThemeStore((s) => s.setTheme);
+  const halalMode = useSettingsStore((s) => s.halalMode);
+  const setHalalMode = useSettingsStore((s) => s.setHalalMode);
+  const halalOnlyFilter = useSettingsStore((s) => s.halalOnlyFilter);
+  const setHalalOnlyFilter = useSettingsStore((s) => s.setHalalOnlyFilter);
 
   // Profile form
   const [name, setName] = useState(user?.full_name ?? "");
@@ -124,6 +129,48 @@ export default function SettingsPage() {
             </button>
           ))}
         </div>
+      </section>
+
+      {/* Investing Preferences */}
+      <section className="rounded-xl border border-border bg-card p-6 space-y-4">
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+          Investing Preferences
+        </h2>
+        <p className="text-xs text-muted-foreground">
+          Sharia compliance screening (Tier 1 — AAOIFI 33% ratios, curated halal-ETF whitelist).
+          Verdicts: <strong>Halal</strong> / <strong>Not halal</strong> / <strong>Unknown</strong>{" "}
+          (most ETFs and tickers with missing financials).
+        </p>
+
+        <label className="flex items-start justify-between gap-4 cursor-pointer">
+          <div>
+            <p className="text-sm font-medium">Show halal status badges</p>
+            <p className="text-xs text-muted-foreground">
+              Tiny ✓ / ✗ / ? icon next to ticker names. Tooltip explains the verdict.
+            </p>
+          </div>
+          <input
+            type="checkbox"
+            checked={halalMode}
+            onChange={(e) => setHalalMode(e.target.checked)}
+            className="mt-1 h-4 w-4 shrink-0 accent-primary"
+          />
+        </label>
+
+        <label className="flex items-start justify-between gap-4 cursor-pointer">
+          <div>
+            <p className="text-sm font-medium">Hide non-compliant on Watchlist</p>
+            <p className="text-xs text-muted-foreground">
+              Filters out tickers verdicted <strong>Not halal</strong>. Unknown and compliant entries still show.
+            </p>
+          </div>
+          <input
+            type="checkbox"
+            checked={halalOnlyFilter}
+            onChange={(e) => setHalalOnlyFilter(e.target.checked)}
+            className="mt-1 h-4 w-4 shrink-0 accent-primary"
+          />
+        </label>
       </section>
 
       {/* Profile */}

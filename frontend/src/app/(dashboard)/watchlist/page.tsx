@@ -9,6 +9,9 @@ import { InlineChart } from "@/components/charts/InlineChart";
 import { formatCurrency, pnlColor } from "@/lib/utils";
 import { isCrypto } from "@/lib/crypto";
 import { TickerLink } from "@/components/ui/TickerLink";
+import { HalalBadge } from "@/components/ui/HalalBadge";
+import { useHalalCompliance } from "@/hooks/useHalalCompliance";
+import { useSettingsStore } from "@/store/settings";
 import type { Quote, WatchlistItem } from "@/types";
 import toast from "react-hot-toast";
 
@@ -71,7 +74,16 @@ export default function WatchlistPage() {
   });
 
   const watchlist = watchlists[0];
-  const items: WatchlistItem[] = watchlist?.items ?? [];
+  const allItems: WatchlistItem[] = watchlist?.items ?? [];
+  const allTickers = allItems.map((i) => i.ticker);
+
+  const halalOnlyFilter = useSettingsStore((s) => s.halalOnlyFilter);
+  const halalByTicker = useHalalCompliance(allTickers);
+
+  // "Halal only" filter — hides explicitly non-compliant; keeps compliant + unknown.
+  const items: WatchlistItem[] = halalOnlyFilter
+    ? allItems.filter((i) => halalByTicker[i.ticker]?.status !== "non_compliant")
+    : allItems;
   const tickers = items.map((i) => i.ticker);
 
   // Live quotes overlay — fetched every 30 s
@@ -306,6 +318,7 @@ export default function WatchlistPage() {
                             </span>
                           </button>
                           <TickerLink ticker={ticker} />
+                          <HalalBadge compliance={halalByTicker[ticker]} />
                           {isCrypto(ticker) && (
                             <span className="ml-1.5 text-[10px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500">
                               crypto

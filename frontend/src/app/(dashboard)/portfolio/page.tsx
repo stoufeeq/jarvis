@@ -13,6 +13,8 @@ import { usePrivacyStore } from "@/store/privacy";
 import { useTradingModeStore } from "@/store/tradingMode";
 import type { Portfolio, Position, Trade, Quote } from "@/types";
 import { TickerLink } from "@/components/ui/TickerLink";
+import { HalalBadge } from "@/components/ui/HalalBadge";
+import { useHalalCompliance } from "@/hooks/useHalalCompliance";
 import toast from "react-hot-toast";
 
 const MASK = "••••••";
@@ -113,6 +115,7 @@ export default function PortfolioPage() {
 
   // Live quotes for change % column — runs in parallel with positions
   const tickers = useMemo(() => [...new Set(positions.map((p) => p.ticker))], [positions]);
+  const halalByTicker = useHalalCompliance(tickers);
   const { data: quotes = [] } = useQuery<Quote[]>({
     queryKey: ["position-quotes", tickers],
     queryFn: () => marketApi.quotes(tickers).then((r) => r.data),
@@ -757,6 +760,7 @@ export default function PortfolioPage() {
                                 </span>
                               </button>
                               <TickerLink ticker={pos.ticker} />
+                              <HalalBadge compliance={halalByTicker[pos.ticker]} />
                               {pos.currency && pos.currency !== "USD" && (
                                 <span className="text-xs px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">
                                   {pos.currency}

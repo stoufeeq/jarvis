@@ -1,6 +1,20 @@
 from fastapi import APIRouter
 
-from app.api.v1 import accounts, advisor, alerts, auth, briefing, calendar, market, portfolio, signals, strategies, users, watchlist
+from app.api.v1 import (
+    accounts,
+    advisor,
+    alerts,
+    auth,
+    briefing,
+    calendar,
+    halal,
+    market,
+    portfolio,
+    signals,
+    strategies,
+    users,
+    watchlist,
+)
 
 api_router = APIRouter(prefix="/api/v1")
 
@@ -16,3 +30,4 @@ api_router.include_router(watchlist.router)
 api_router.include_router(briefing.router)
 api_router.include_router(calendar.router)
 api_router.include_router(strategies.router)
+api_router.include_router(halal.router)

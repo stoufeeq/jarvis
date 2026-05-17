@@ -1,0 +1,49 @@
+{
+  "_schema_version": 1,
+  "_threshold_source": "AAOIFI 33%",
+  "_last_reviewed": "2026-05-17",
+
+  "etfs_compliant": {
+    "HLAL": "Wahed FTSE USA Sharia ETF",
+    "SPUS": "SP Funds S&P 500 Sharia Industry Exclusions",
+    "SPRE": "SP Funds S&P Global REIT Sharia",
+    "SPTE": "SP Funds S&P Global Technology Sharia",
+    "SPSK": "SP Funds Dow Jones Global Sukuk",
+    "UMMA": "Wahed Dow Jones Islamic World",
+    "ISDU": "iShares MSCI USA Islamic UCITS",
+    "ISWD": "iShares MSCI World Islamic UCITS",
+    "ISDE": "iShares MSCI Emerging Markets Islamic UCITS",
+    "IGDA": "Invesco Dow Jones Islamic Global Developed Markets UCITS"
+  },
+
+  "_industry_note": "yfinance industry strings — match exact substrings (case-insensitive). AAOIFI banned activities mapped to yfinance's GICS-ish industry labels.",
+  "banned_industries": [
+    "Beverages—Brewers",
+    "Beverages—Wineries & Distilleries",
+    "Tobacco",
+    "Gambling",
+    "Resorts & Casinos",
+    "Banks—Diversified",
+    "Banks—Regional",
+    "Banks—Regional - US",
+    "Capital Markets",
+    "Credit Services",
+    "Financial Conglomerates",
+    "Financial Data & Stock Exchanges",
+    "Insurance—Diversified",
+    "Insurance—Life",
+    "Insurance—Property & Casualty",
+    "Insurance—Reinsurance",
+    "Insurance—Specialty",
+    "Insurance Brokers",
+    "Mortgage Finance",
+    "Aerospace & Defense",
+    "Defense",
+    "Adult Entertainment"
+  ],
+
+  "_sector_note": "Coarser fallback when industry lookup misses but sector is clearly off-limits.",
+  "banned_sectors": [
+    "Financial Services"
+  ]
+}
