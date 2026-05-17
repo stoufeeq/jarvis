@@ -13,20 +13,45 @@ const ALERT_TYPES = [
   { value: "pnl_threshold", label: "P&L threshold" },
 ];
 
+const EMPTY_FORM = {
+  ticker: "",
+  alert_type: "price_above",
+  threshold_value: "",
+  channels: "in_app",
+};
+
 export default function AlertsPage() {
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({
-    ticker: "",
-    alert_type: "price_above",
-    threshold_value: "",
-    channels: "in_app",
-  });
+  // null = creating, number = editing that alert id. Ticker + type are
+  // immutable during edit because they define what the alert IS; delete
+  // and recreate to change those.
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [form, setForm] = useState(EMPTY_FORM);
 
   const { data: alerts = [], isLoading } = useQuery<Alert[]>({
     queryKey: ["alerts"],
     queryFn: () => alertsApi.list().then((r) => r.data),
   });
+
+  function resetForm() {
+    setShowForm(false);
+    setEditingId(null);
+    setForm(EMPTY_FORM);
+  }
+
+  function startEdit(alert: Alert) {
+    setEditingId(alert.id);
+    setForm({
+      ticker: alert.ticker,
+      alert_type: alert.alert_type,
+      threshold_value: alert.threshold_value != null ? String(alert.threshold_value) : "",
+      channels: alert.channels,
+    });
+    setShowForm(true);
+    // Scroll into view in case the form is above the alert in the list.
+    setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 0);
+  }
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -38,11 +63,24 @@ export default function AlertsPage() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["alerts"] });
-      setShowForm(false);
-      setForm({ ticker: "", alert_type: "price_above", threshold_value: "", channels: "in_app" });
+      resetForm();
       toast.success("Alert created");
     },
     onError: () => toast.error("Failed to create alert"),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: () =>
+      alertsApi.update(editingId!, {
+        threshold_value: form.threshold_value ? parseFloat(form.threshold_value) : null,
+        channels: form.channels,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["alerts"] });
+      resetForm();
+      toast.success("Alert updated");
+    },
+    onError: () => toast.error("Failed to update alert"),
   });
 
   const toggleMutation = useMutation({
@@ -74,17 +112,21 @@ export default function AlertsPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Alerts</h1>
         <button
-          onClick={() => setShowForm(true)}
+          onClick={() => {
+            setEditingId(null);
+            setForm(EMPTY_FORM);
+            setShowForm(true);
+          }}
           className="px-4 py-2 rounded-md bg-secondary text-sm font-medium hover:bg-secondary/80"
         >
           + New Alert
         </button>
       </div>
 
-      {/* Create form */}
+      {/* Create / Edit form */}
       {showForm && (
         <div className="rounded-xl border border-border bg-card p-5 space-y-4">
-          <h3 className="font-semibold">New Alert</h3>
+          <h3 className="font-semibold">{editingId ? "Edit Alert" : "New Alert"}</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs text-muted-foreground mb-1">Ticker</label>
@@ -92,7 +134,8 @@ export default function AlertsPage() {
                 value={form.ticker}
                 onChange={(e) => setForm({ ...form, ticker: e.target.value.toUpperCase() })}
                 placeholder="e.g. AAPL"
-                className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                disabled={editingId !== null}
+                className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed"
               />
             </div>
             <div>
@@ -100,7 +143,8 @@ export default function AlertsPage() {
               <select
                 value={form.alert_type}
                 onChange={(e) => setForm({ ...form, alert_type: e.target.value })}
-                className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm"
+                disabled={editingId !== null}
+                className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {ALERT_TYPES.map((t) => (
                   <option key={t.value} value={t.value}>{t.label}</option>
@@ -133,15 +177,26 @@ export default function AlertsPage() {
               </select>
             </div>
           </div>
+          {editingId !== null && (
+            <p className="text-xs text-muted-foreground">
+              Ticker and type can&apos;t be changed — delete this alert and create a new one to switch either.
+            </p>
+          )}
           <div className="flex gap-2">
             <button
-              onClick={() => createMutation.mutate()}
-              disabled={!form.ticker || createMutation.isPending}
+              onClick={() => (editingId !== null ? updateMutation.mutate() : createMutation.mutate())}
+              disabled={
+                !form.ticker ||
+                createMutation.isPending ||
+                updateMutation.isPending
+              }
               className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50"
             >
-              {createMutation.isPending ? "Creating…" : "Create Alert"}
+              {editingId !== null
+                ? updateMutation.isPending ? "Saving…" : "Save changes"
+                : createMutation.isPending ? "Creating…" : "Create Alert"}
             </button>
-            <button onClick={() => setShowForm(false)} className="text-sm text-muted-foreground">
+            <button onClick={resetForm} className="text-sm text-muted-foreground">
               Cancel
             </button>
           </div>
@@ -194,12 +249,20 @@ export default function AlertsPage() {
                   Re-arm
                 </button>
               ) : (
-                <button
-                  onClick={() => toggleMutation.mutate({ id: alert.id, is_active: !alert.is_active })}
-                  className="text-xs px-2 py-1 rounded bg-secondary hover:bg-secondary/80"
-                >
-                  {alert.is_active ? "Pause" : "Resume"}
-                </button>
+                <>
+                  <button
+                    onClick={() => startEdit(alert)}
+                    className="text-xs px-2 py-1 rounded bg-secondary hover:bg-secondary/80"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => toggleMutation.mutate({ id: alert.id, is_active: !alert.is_active })}
+                    className="text-xs px-2 py-1 rounded bg-secondary hover:bg-secondary/80"
+                  >
+                    {alert.is_active ? "Pause" : "Resume"}
+                  </button>
+                </>
               )}
               <button
                 onClick={() => deleteMutation.mutate(alert.id)}

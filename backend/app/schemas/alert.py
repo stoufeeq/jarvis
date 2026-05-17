@@ -16,6 +16,7 @@ class AlertCreate(BaseModel):
 class AlertUpdate(BaseModel):
     is_active: bool | None = None
     threshold_value: float | None = None
+    channels: str | None = None
     is_triggered: bool | None = None
     acknowledged_at: datetime | None = None
 
