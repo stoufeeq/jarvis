@@ -10,8 +10,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.account import Account, AccountBalance, AccountTransaction, TransactionType
-from app.schemas.account import AccountCreate, AccountTransactionCreate, AccountUpdate
+from app.schemas.account import (
+    AccountCreate,
+    AccountTransactionCreate,
+    AccountTransactionUpdate,
+    AccountUpdate,
+)
 from app.services.market_data import MarketDataService
+
+
+def _txn_delta(t: TransactionType, amount: float) -> float:
+    """How much this transaction adds (positive) or removes (negative)
+    from the corresponding currency balance."""
+    return amount if t == TransactionType.deposit else -amount
 
 
 class AccountService:
@@ -103,6 +114,70 @@ class AccountService:
         await self.db.flush()
         return txn
 
+    async def update_transaction(
+        self,
+        txn: AccountTransaction,
+        payload: AccountTransactionUpdate,
+    ) -> AccountTransaction:
+        """Reverse the existing txn's effect on balances, apply the new
+        values, then re-apply. Rejects with 400 if any affected currency
+        balance would go negative."""
+        from fastapi import HTTPException
+
+        old_currency = txn.currency
+        old_amount = float(txn.amount)
+        old_type = txn.transaction_type
+
+        # 1. Reverse original effect
+        await self._adjust_balance(txn.account_id, old_currency, -_txn_delta(old_type, old_amount))
+
+        # 2. Apply new values onto the txn row
+        new_type = payload.transaction_type if payload.transaction_type is not None else old_type
+        new_amount = payload.amount if payload.amount is not None else old_amount
+        new_currency = (payload.currency or old_currency).upper()
+
+        txn.transaction_type = new_type
+        txn.amount = new_amount
+        txn.currency = new_currency
+        if payload.notes is not None:
+            txn.notes = payload.notes
+        if payload.transacted_at is not None:
+            txn.transacted_at = payload.transacted_at
+
+        # 3. Apply new effect
+        await self._adjust_balance(txn.account_id, new_currency, _txn_delta(new_type, new_amount))
+
+        # 4. Validate — both currencies if changed; otherwise just the one.
+        for c in {old_currency, new_currency}:
+            balance = await self._get_or_create_balance(txn.account_id, c)
+            if float(balance.balance) < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Update would push {c} balance negative",
+                )
+
+        await self.db.flush()
+        return txn
+
+    async def delete_transaction(self, txn: AccountTransaction) -> None:
+        """Reverse the txn's effect on the balance, then delete it.
+        Rejects with 400 if removing a deposit would push the balance
+        negative (i.e. the funds were already spent in a later withdrawal)."""
+        from fastapi import HTTPException
+
+        await self._adjust_balance(
+            txn.account_id, txn.currency, -_txn_delta(txn.transaction_type, float(txn.amount))
+        )
+        balance = await self._get_or_create_balance(txn.account_id, txn.currency)
+        if float(balance.balance) < 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Deleting this would push {txn.currency} balance negative",
+            )
+
+        await self.db.delete(txn)
+        await self.db.flush()
+
     # ── Liquidity aggregation ─────────────────────────────────────────────────
 
     async def get_liquidity(self, user_id: int) -> dict:
@@ -138,6 +213,12 @@ class AccountService:
         return {"balances": totals, "total_usd": round(total_usd, 2)}
 
     # ── Helpers ───────────────────────────────────────────────────────────────
+
+    async def _adjust_balance(self, account_id: int, currency: str, delta: float) -> None:
+        """Add `delta` (can be negative) to (account, currency) balance.
+        Caller is responsible for validating the result is non-negative."""
+        balance = await self._get_or_create_balance(account_id, currency)
+        balance.balance = float(balance.balance) + delta
 
     async def _get_or_create_balance(self, account_id: int, currency: str) -> AccountBalance:
         result = await self.db.execute(

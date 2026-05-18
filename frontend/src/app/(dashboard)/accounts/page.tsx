@@ -20,7 +20,11 @@ export default function AccountsPage() {
 
   const [showNewAccount, setShowNewAccount] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
-  const [txModal, setTxModal] = useState<{ type: "deposit" | "withdraw"; accountId: number } | null>(null);
+  const [txModal, setTxModal] = useState<
+    | { mode: "create"; type: "deposit" | "withdraw"; accountId: number }
+    | { mode: "edit"; accountId: number; transaction: AccountTransaction }
+    | null
+  >(null);
 
   const { data: accounts = [] } = useQuery<Account[]>({
     queryKey: ["accounts"],
@@ -66,8 +70,8 @@ export default function AccountsPage() {
               displayCurrency={displayCurrency}
               onSelect={() => setSelectedAccountId(acct.id === selectedAccountId ? null : acct.id)}
               selected={acct.id === selectedAccountId}
-              onDeposit={() => setTxModal({ type: "deposit", accountId: acct.id })}
-              onWithdraw={() => setTxModal({ type: "withdraw", accountId: acct.id })}
+              onDeposit={() => setTxModal({ mode: "create", type: "deposit", accountId: acct.id })}
+              onWithdraw={() => setTxModal({ mode: "create", type: "withdraw", accountId: acct.id })}
               onDelete={async () => {
                 if (!confirm(`Delete account "${acct.name}"?`)) return;
                 await accountsApi.delete(acct.id);
@@ -98,11 +102,32 @@ export default function AccountsPage() {
                     <th className="text-left px-4 py-2 text-muted-foreground font-medium">Type</th>
                     <th className="text-right px-4 py-2 text-muted-foreground font-medium">Amount</th>
                     <th className="text-left px-4 py-2 text-muted-foreground font-medium">Notes</th>
+                    <th className="text-right px-4 py-2" />
                   </tr>
                 </thead>
                 <tbody>
                   {detail.transactions.map((tx) => (
-                    <TransactionRow key={tx.id} tx={tx} isPrivate={isPrivate} />
+                    <TransactionRow
+                      key={tx.id}
+                      tx={tx}
+                      isPrivate={isPrivate}
+                      onEdit={() => setTxModal({ mode: "edit", accountId: detail.id, transaction: tx })}
+                      onDelete={async () => {
+                        if (!confirm(`Delete this ${tx.transaction_type} of ${tx.amount} ${tx.currency}?`)) return;
+                        try {
+                          await accountsApi.deleteTransaction(detail.id, tx.id);
+                          qc.invalidateQueries({ queryKey: ["accounts"] });
+                          qc.invalidateQueries({ queryKey: ["account", detail.id] });
+                          qc.invalidateQueries({ queryKey: ["liquidity"] });
+                          toast.success("Transaction deleted");
+                        } catch (err) {
+                          // axios error shape — backend returns 400 if delete
+                          // would push balance negative.
+                          const e = err as { response?: { data?: { detail?: string } } };
+                          toast.error(e?.response?.data?.detail ?? "Failed to delete transaction");
+                        }
+                      }}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -123,11 +148,12 @@ export default function AccountsPage() {
         />
       )}
 
-      {/* Deposit / withdraw modal */}
+      {/* Deposit / withdraw / edit modal */}
       {txModal && (
         <TransactionModal
-          type={txModal.type}
-          accountId={txModal.accountId}
+          {...(txModal.mode === "edit"
+            ? { mode: "edit", accountId: txModal.accountId, transaction: txModal.transaction }
+            : { mode: "create", accountId: txModal.accountId, type: txModal.type })}
           onClose={() => setTxModal(null)}
           onDone={() => {
             qc.invalidateQueries({ queryKey: ["accounts"] });
@@ -219,7 +245,14 @@ function AccountCard({
 
 // ── Transaction row ───────────────────────────────────────────────────────────
 
-function TransactionRow({ tx, isPrivate }: { tx: AccountTransaction; isPrivate: boolean }) {
+function TransactionRow({
+  tx, isPrivate, onEdit, onDelete,
+}: {
+  tx: AccountTransaction;
+  isPrivate: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
   const isDeposit = tx.transaction_type === "deposit";
   return (
     <tr className="border-b border-border last:border-0 hover:bg-secondary/20 transition-colors">
@@ -237,6 +270,22 @@ function TransactionRow({ tx, isPrivate }: { tx: AccountTransaction; isPrivate: 
       </td>
       <td className="px-4 py-2 text-muted-foreground text-xs truncate max-w-[200px]">
         {tx.notes ?? "—"}
+      </td>
+      <td className="px-4 py-2 text-right">
+        <div className="flex gap-2 justify-end">
+          <button
+            onClick={onEdit}
+            className="text-xs px-2 py-1 rounded bg-secondary hover:bg-secondary/80"
+          >
+            Edit
+          </button>
+          <button
+            onClick={onDelete}
+            className="text-xs px-2 py-1 rounded bg-destructive/20 text-red-400 hover:bg-destructive/40"
+          >
+            Delete
+          </button>
+        </div>
       </td>
     </tr>
   );
@@ -298,20 +347,32 @@ function NewAccountModal({ onClose, onCreated }: { onClose: () => void; onCreate
 
 // ── Deposit / Withdraw modal ──────────────────────────────────────────────────
 
-function TransactionModal({
-  type, accountId, onClose, onDone,
-}: {
-  type: "deposit" | "withdraw";
-  accountId: number;
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState("USD");
-  const [notes, setNotes] = useState("");
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+type TransactionModalProps =
+  | { mode: "create"; type: "deposit" | "withdraw"; accountId: number; onClose: () => void; onDone: () => void }
+  | { mode: "edit"; accountId: number; transaction: AccountTransaction; onClose: () => void; onDone: () => void };
+
+function TransactionModal(props: TransactionModalProps) {
+  const { mode, accountId, onClose, onDone } = props;
+  const initial =
+    mode === "edit"
+      ? props.transaction
+      : null;
+
+  const [txType, setTxType] = useState<"deposit" | "withdrawal">(
+    mode === "edit"
+      ? initial!.transaction_type
+      : props.type === "deposit" ? "deposit" : "withdrawal"
+  );
+  const [amount, setAmount] = useState(initial ? String(initial.amount) : "");
+  const [currency, setCurrency] = useState(initial?.currency ?? "USD");
+  const [notes, setNotes] = useState(initial?.notes ?? "");
+  const [date, setDate] = useState(
+    initial
+      ? new Date(initial.transacted_at).toISOString().slice(0, 10)
+      : new Date().toISOString().slice(0, 10)
+  );
   const [loading, setLoading] = useState(false);
-  const isDeposit = type === "deposit";
+  const isDeposit = txType === "deposit";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -319,28 +380,57 @@ function TransactionModal({
     if (!amt || amt <= 0) return;
     setLoading(true);
     try {
-      const payload = {
-        amount: amt,
-        currency,
-        notes: notes.trim() || undefined,
-        transacted_at: new Date(date).toISOString(),
-      };
-      if (isDeposit) {
-        await accountsApi.deposit(accountId, payload);
+      if (mode === "edit") {
+        await accountsApi.updateTransaction(accountId, initial!.id, {
+          transaction_type: txType,
+          amount: amt,
+          currency,
+          notes: notes.trim() ? notes.trim() : null,
+          transacted_at: new Date(date).toISOString(),
+        });
+        toast.success("Transaction updated");
       } else {
-        await accountsApi.withdraw(accountId, payload);
+        const payload = {
+          amount: amt,
+          currency,
+          notes: notes.trim() || undefined,
+          transacted_at: new Date(date).toISOString(),
+        };
+        if (isDeposit) {
+          await accountsApi.deposit(accountId, payload);
+        } else {
+          await accountsApi.withdraw(accountId, payload);
+        }
       }
       onDone();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail ?? `Failed to record ${type}`);
+    } catch (err) {
+      const e = err as { response?: { data?: { detail?: string } } };
+      toast.error(e?.response?.data?.detail ?? `Failed to save transaction`);
     } finally {
       setLoading(false);
     }
   };
 
+  const title = mode === "edit" ? "Edit Transaction" : isDeposit ? "Deposit" : "Withdraw";
+
   return (
-    <Modal title={isDeposit ? "Deposit" : "Withdraw"} onClose={onClose}>
+    <Modal title={title} onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Type selector only in edit mode (create mode is locked by the
+            button that opened the modal). */}
+        {mode === "edit" && (
+          <div>
+            <label className="block text-sm font-medium mb-1">Type</label>
+            <select
+              value={txType}
+              onChange={(e) => setTxType(e.target.value as "deposit" | "withdrawal")}
+              className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="deposit">Deposit</option>
+              <option value="withdrawal">Withdrawal</option>
+            </select>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-sm font-medium mb-1">Amount</label>
@@ -393,7 +483,7 @@ function TransactionModal({
               isDeposit ? "bg-emerald-600 hover:bg-emerald-500" : "bg-red-600 hover:bg-red-500"
             }`}
           >
-            {loading ? "Saving…" : isDeposit ? "Deposit" : "Withdraw"}
+            {loading ? "Saving…" : mode === "edit" ? "Save changes" : isDeposit ? "Deposit" : "Withdraw"}
           </button>
         </div>
       </form>

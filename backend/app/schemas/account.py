@@ -43,6 +43,29 @@ class AccountTransactionCreate(BaseModel):
         return v.upper()
 
 
+class AccountTransactionUpdate(BaseModel):
+    """All fields optional. Type/amount/currency changes re-balance the
+    account; the service rejects updates that would push any balance
+    negative (HTTP 400)."""
+    transaction_type: TransactionType | None = None
+    amount: float | None = None
+    currency: str | None = None
+    notes: str | None = None
+    transacted_at: datetime | None = None
+
+    @field_validator("amount")
+    @classmethod
+    def amount_positive(cls, v: float | None) -> float | None:
+        if v is not None and v <= 0:
+            raise ValueError("Amount must be positive")
+        return v
+
+    @field_validator("currency")
+    @classmethod
+    def currency_upper(cls, v: str | None) -> str | None:
+        return v.upper() if v else v
+
+
 class AccountTransactionRead(BaseModel):
     id: int
     account_id: int

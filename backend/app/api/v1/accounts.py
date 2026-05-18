@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.database import get_db
+from app.models.account import AccountTransaction
 from app.models.user import User
 from app.schemas.account import (
     AccountCreate,
@@ -11,6 +12,7 @@ from app.schemas.account import (
     AccountRead,
     AccountTransactionCreate,
     AccountTransactionRead,
+    AccountTransactionUpdate,
     AccountUpdate,
     LiquidityResponse,
 )
@@ -143,3 +145,43 @@ async def list_transactions(
         raise NotFoundError("Account not found")
     _assert_owner(account, user)
     return account.transactions
+
+
+async def _get_owned_txn(db: AsyncSession, account_id: int, txn_id: int, user: User) -> AccountTransaction:
+    """Fetch a transaction and verify it belongs to the calling user's account."""
+    svc = AccountService(db)
+    account = await svc.get(account_id)
+    if not account:
+        raise NotFoundError("Account not found")
+    _assert_owner(account, user)
+    for t in account.transactions:
+        if t.id == txn_id:
+            return t
+    raise NotFoundError("Transaction not found")
+
+
+@router.patch("/{account_id}/transactions/{txn_id}", response_model=AccountTransactionRead)
+async def update_transaction(
+    account_id: int,
+    txn_id: int,
+    payload: AccountTransactionUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    txn = await _get_owned_txn(db, account_id, txn_id, user)
+    updated = await AccountService(db).update_transaction(txn, payload)
+    await db.commit()
+    await db.refresh(updated)
+    return updated
+
+
+@router.delete("/{account_id}/transactions/{txn_id}", status_code=204)
+async def delete_transaction(
+    account_id: int,
+    txn_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    txn = await _get_owned_txn(db, account_id, txn_id, user)
+    await AccountService(db).delete_transaction(txn)
+    await db.commit()

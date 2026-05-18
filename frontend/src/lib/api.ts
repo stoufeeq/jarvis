@@ -170,6 +170,15 @@ export const accountsApi = {
   withdraw: (id: number, data: { amount: number; currency: string; notes?: string; transacted_at?: string }) =>
     api.post(`/accounts/${id}/withdraw`, data),
   transactions: (id: number) => api.get(`/accounts/${id}/transactions`),
+  updateTransaction: (accountId: number, txnId: number, data: {
+    transaction_type?: "deposit" | "withdrawal";
+    amount?: number;
+    currency?: string;
+    notes?: string | null;
+    transacted_at?: string;
+  }) => api.patch(`/accounts/${accountId}/transactions/${txnId}`, data),
+  deleteTransaction: (accountId: number, txnId: number) =>
+    api.delete(`/accounts/${accountId}/transactions/${txnId}`),
   liquidity: () => api.get("/accounts/liquidity"),
 };
 
