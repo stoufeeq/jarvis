@@ -11,23 +11,32 @@ from app.models.news import NewsItem
 
 settings = get_settings()
 
-SYSTEM_PROMPT = """You are Jarvis, an expert financial advisor and portfolio analyst.
-You have deep knowledge of equity markets, technical analysis, fundamental analysis,
-macroeconomics, and risk management.
+SYSTEM_PROMPT = """You are Jarvis — a knowledgeable, no-nonsense financial advisor
+talking to a single user (the one writing to you). Talk to them like a trusted
+friend who happens to know markets cold, not a corporate analyst writing a report.
 
-Your role is to:
-- Review portfolios and identify risks, opportunities, and imbalances
-- Interpret market signals and news to extract actionable insights
-- Suggest entry/exit points with clear reasoning
-- Always quantify risk (stop-loss levels, position sizing)
-- Be direct and specific — avoid vague generalities
-- Acknowledge uncertainty honestly; never guarantee outcomes
+Conversational style:
+- Match the user's tone and length. A one-line question gets a one- or two-line
+  reply. A casual question gets a casual answer. Don't pad.
+- Skip headings, bullet ladders, and markdown sections for normal chat. Use them
+  ONLY when the user asks for a structured analysis (e.g. a full portfolio review,
+  a multi-point comparison) or when a list is genuinely the clearest format.
+- Stop volunteering disclaimers. The user opted into this tool and knows it isn't
+  regulated advice. Mention risk only when it's directly relevant to the specific
+  question (e.g. "this is a leveraged ETF, drawdowns are brutal") — never as a
+  footer.
+- Don't keep restating "do your own due diligence." They know.
+- Don't repeat back the user's question or summarise it before answering. Answer.
 
-You are NOT a regulated financial advisor. Always remind users that your analysis
-is for informational purposes and they should do their own due diligence.
-
-Output format: Use markdown with clear sections. Use bullet points for lists.
-Lead with the most actionable insight."""
+What to bring to the table:
+- Concrete numbers when useful (price levels, P/E, debt ratio).
+- Honest "I don't know" or "the data doesn't support a strong view" when that's
+  the truth. Don't manufacture certainty.
+- Quantified risk (entry, stop, target) when the user is actually asking about a
+  trade idea — not on every reply.
+- If the system gave you a portfolio snapshot, use it to ground your answers in
+  what the user actually owns. Reference live prices/P&L from the snapshot rather
+  than generic stock-tips."""
 
 
 class AIAdvisor:
@@ -38,12 +47,52 @@ class AIAdvisor:
             system_instruction=SYSTEM_PROMPT,
         )
 
-    async def chat(self, user_message: str, portfolio_context: dict | None = None) -> str:
-        prompt = user_message
-        if portfolio_context:
-            prompt = f"{self._format_portfolio_context(portfolio_context)}\n\n{user_message}"
+    async def chat(
+        self,
+        user_message: str,
+        portfolio_context: dict | None = None,
+        history: list[dict] | None = None,
+    ) -> str:
+        """Generate a reply, replaying conversation history so multi-turn
+        chats stay grounded in earlier turns.
 
-        response = await self._model.generate_content_async(prompt)
+        Args:
+            user_message: the new user input (raw, as the user typed it).
+            portfolio_context: optional snapshot from PortfolioService. Prepended
+                to this turn's message so the model sees current prices/P&L.
+                Refreshed each call so a long chat stays current.
+            history: prior turns as [{role: "user"|"assistant", content: str}, ...]
+                in chronological order. Should NOT include `user_message` itself.
+        """
+        # Build the current turn's message — portfolio context (if any)
+        # rides along with this turn only; it isn't saved to the DB so the
+        # conversation history stays clean.
+        if portfolio_context:
+            current_turn_text = (
+                "(Current portfolio snapshot — use this to ground your answer; "
+                "don't dwell on it unless asked.)\n"
+                f"{self._format_portfolio_context(portfolio_context)}\n\n"
+                f"{user_message}"
+            )
+        else:
+            current_turn_text = user_message
+
+        # Convert our role labels to Gemini's. Skip the empty leading model
+        # turn case — Gemini errors if history starts with a "model" turn.
+        contents: list[dict] = []
+        if history:
+            for msg in history:
+                if not msg.get("content"):
+                    continue
+                role = "model" if msg["role"] == "assistant" else "user"
+                # First message must be from "user"; drop any leading model turns.
+                if not contents and role == "model":
+                    continue
+                contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+
+        contents.append({"role": "user", "parts": [{"text": current_turn_text}]})
+
+        response = await self._model.generate_content_async(contents)
         return response.text
 
     async def portfolio_review(self, context: dict) -> str:

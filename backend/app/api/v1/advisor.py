@@ -60,11 +60,15 @@ async def chat(
 
     conv_svc = ConversationService(db)
 
-    # Get or create the conversation
+    # Get or create the conversation. For existing conversations we capture
+    # the message history BEFORE adding the new user message so the model
+    # gets the full prior context (and doesn't see the current turn twice).
+    history: list[dict] = []
     if payload.conversation_id:
         conv = await conv_svc.get(payload.conversation_id, user.id)
         if not conv:
             raise NotFoundError("Conversation not found")
+        history = [{"role": m.role, "content": m.content} for m in conv.messages]
     else:
         conv = await conv_svc.create(
             user_id=user.id,
@@ -72,14 +76,16 @@ async def chat(
             portfolio_id=payload.portfolio_id,
         )
 
-    await conv_svc.add_message(conv.id, "user", payload.message)
-
     advisor = AIAdvisor()
     response = await advisor.chat(
         user_message=payload.message,
         portfolio_context=portfolio_context,
+        history=history,
     )
 
+    # Persist both turns only after the model succeeds, so a Gemini failure
+    # doesn't leave an orphaned user message with no reply.
+    await conv_svc.add_message(conv.id, "user", payload.message)
     await conv_svc.add_message(conv.id, "assistant", response)
     await db.commit()
 
