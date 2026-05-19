@@ -75,6 +75,9 @@ class AccountTransactionRead(BaseModel):
     notes: str | None
     transacted_at: datetime
     created_at: datetime
+    # When set, this txn was auto-created by trade-cash wiring; UI hides
+    # Edit/Delete actions on these rows so they don't desync from the trade.
+    trade_id: int | None = None
 
     model_config = {"from_attributes": True}
 

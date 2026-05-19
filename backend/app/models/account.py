@@ -44,7 +44,14 @@ class AccountBalance(Base):
 
 
 class AccountTransaction(TimestampMixin, Base):
-    """Immutable ledger of deposits and withdrawals."""
+    """Immutable ledger of deposits and withdrawals.
+
+    When `trade_id` is set, this row was auto-created by the trade-cash
+    wiring (debit on buy, credit on sell). The trade-cash service owns
+    these rows: they must not be edited/deleted directly via the
+    account-transaction API — edit/delete the trade instead and the
+    wiring will reverse + recreate as needed.
+    """
     __tablename__ = "account_transactions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -56,5 +63,11 @@ class AccountTransaction(TimestampMixin, Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
     transacted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Link back to the originating trade, if this txn was created by the
+    # auto-settle wiring. SET NULL so a hard-deleted trade leaves the
+    # txn as a normal historical record rather than vanishing it.
+    trade_id: Mapped[int | None] = mapped_column(
+        ForeignKey("trades.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     account: Mapped["Account"] = relationship(back_populates="transactions")

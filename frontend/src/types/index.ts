@@ -185,6 +185,9 @@ export interface AccountTransaction {
   notes: string | null;
   transacted_at: string;
   created_at: string;
+  // When non-null, this txn was auto-created by trade-cash wiring;
+  // the UI hides Edit/Delete so it can't desync from the trade.
+  trade_id: number | null;
 }
 
 export interface Account {

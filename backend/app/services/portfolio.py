@@ -106,10 +106,19 @@ class PortfolioService:
         return list(result.scalars().all())
 
     async def add_trade(self, portfolio_id: int, payload: TradeCreate) -> Trade:
+        from app.services.trade_cash import TradeCashService
+
         trade = Trade(portfolio_id=portfolio_id, **payload.model_dump())
         self.db.add(trade)
         await self.db.flush()
         await self._update_position(portfolio_id, trade)
+
+        # Auto-settle cash against the user's accounts for real portfolios.
+        # Paper portfolios use their own portfolio.cash_balance and skip this.
+        portfolio = await self.get(portfolio_id)
+        if portfolio is not None:
+            await TradeCashService(self.db).on_trade_created(portfolio, trade)
+
         await self.db.refresh(trade)
         return trade
 
@@ -222,14 +231,28 @@ class PortfolioService:
             await self._update_position(portfolio_id, trade)
 
     async def update_trade(self, trade: Trade, payload: TradeUpdate) -> Trade:
+        from app.services.trade_cash import TradeCashService
+
         for field, value in payload.model_dump(exclude_none=True).items():
             setattr(trade, field, value)
         await self.db.flush()
         await self._recalculate_position(trade.portfolio_id, trade.ticker)
+
+        portfolio = await self.get(trade.portfolio_id)
+        if portfolio is not None:
+            await TradeCashService(self.db).on_trade_updated(portfolio, trade)
+
         await self.db.refresh(trade)
         return trade
 
     async def delete_trade(self, trade: Trade) -> None:
+        from app.services.trade_cash import TradeCashService
+
+        # Reverse cash flow first while the trade still exists (FK refs).
+        portfolio = await self.get(trade.portfolio_id)
+        if portfolio is not None:
+            await TradeCashService(self.db).reverse_for_trade(trade)
+
         portfolio_id, ticker = trade.portfolio_id, trade.ticker
         await self.db.delete(trade)
         await self.db.flush()

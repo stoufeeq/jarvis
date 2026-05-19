@@ -254,6 +254,7 @@ function TransactionRow({
   onDelete: () => void;
 }) {
   const isDeposit = tx.transaction_type === "deposit";
+  const isFromTrade = tx.trade_id != null;
   return (
     <tr className="border-b border-border last:border-0 hover:bg-secondary/20 transition-colors">
       <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
@@ -263,6 +264,14 @@ function TransactionRow({
         <span className={`text-xs font-medium ${isDeposit ? "text-emerald-400" : "text-red-400"}`}>
           {isDeposit ? "Deposit" : "Withdrawal"}
         </span>
+        {isFromTrade && (
+          <span
+            className="ml-2 text-[10px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400"
+            title="Auto-created from a trade. Edit/delete the trade to change it."
+          >
+            trade
+          </span>
+        )}
       </td>
       <td className={`px-4 py-2 text-right font-medium tabular-nums ${isDeposit ? "text-emerald-400" : "text-red-400"}`}>
         {isPrivate ? "••••••" : `${isDeposit ? "+" : "−"}${formatCurrency(tx.amount, tx.currency)}`}
@@ -272,20 +281,24 @@ function TransactionRow({
         {tx.notes ?? "—"}
       </td>
       <td className="px-4 py-2 text-right">
-        <div className="flex gap-2 justify-end">
-          <button
-            onClick={onEdit}
-            className="text-xs px-2 py-1 rounded bg-secondary hover:bg-secondary/80"
-          >
-            Edit
-          </button>
-          <button
-            onClick={onDelete}
-            className="text-xs px-2 py-1 rounded bg-destructive/20 text-red-400 hover:bg-destructive/40"
-          >
-            Delete
-          </button>
-        </div>
+        {isFromTrade ? (
+          <span className="text-xs text-muted-foreground/60 italic">via trade</span>
+        ) : (
+          <div className="flex gap-2 justify-end">
+            <button
+              onClick={onEdit}
+              className="text-xs px-2 py-1 rounded bg-secondary hover:bg-secondary/80"
+            >
+              Edit
+            </button>
+            <button
+              onClick={onDelete}
+              className="text-xs px-2 py-1 rounded bg-destructive/20 text-red-400 hover:bg-destructive/40"
+            >
+              Delete
+            </button>
+          </div>
+        )}
       </td>
     </tr>
   );

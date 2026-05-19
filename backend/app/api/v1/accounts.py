@@ -160,6 +160,17 @@ async def _get_owned_txn(db: AsyncSession, account_id: int, txn_id: int, user: U
     raise NotFoundError("Transaction not found")
 
 
+def _reject_if_trade_linked(txn: AccountTransaction) -> None:
+    """Trade-linked txns are owned by trade-cash wiring; mutating them
+    directly would desync the trade. Edit/delete the trade instead."""
+    from fastapi import HTTPException
+    if txn.trade_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="This transaction was created by a trade. Edit or delete the trade instead.",
+        )
+
+
 @router.patch("/{account_id}/transactions/{txn_id}", response_model=AccountTransactionRead)
 async def update_transaction(
     account_id: int,
@@ -169,6 +180,7 @@ async def update_transaction(
     db: AsyncSession = Depends(get_db),
 ):
     txn = await _get_owned_txn(db, account_id, txn_id, user)
+    _reject_if_trade_linked(txn)
     updated = await AccountService(db).update_transaction(txn, payload)
     await db.commit()
     await db.refresh(updated)
@@ -183,5 +195,6 @@ async def delete_transaction(
     db: AsyncSession = Depends(get_db),
 ):
     txn = await _get_owned_txn(db, account_id, txn_id, user)
+    _reject_if_trade_linked(txn)
     await AccountService(db).delete_transaction(txn)
     await db.commit()
