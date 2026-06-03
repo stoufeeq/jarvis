@@ -140,6 +140,68 @@ class AutoTraderService:
             if ok: closed += 1
         return closed
 
+    # ── Consolidated verdict ─────────────────────────────────────────────
+
+    async def _consolidated_verdict(
+        self, strategy: Strategy, ticker: str
+    ) -> dict | None:
+        """Net direction + score across all unexpired signals matching this
+        strategy's signal_type filter for this ticker.
+
+        Replaces the old per-signal reaction model so that a strong bullish
+        confluence isn't whipsawed out by a single weak bearish rule that
+        fires in the same scan. score = Σ (strength × direction_sign) over
+        the matching rules. Returns None if no rules match.
+
+        Also picks the strongest signal in the net direction as the trigger
+        record so trade_signal_id is meaningful — it represents the dominant
+        rule contributing to the verdict, not just the latest one to fire.
+        """
+        now = datetime.now(UTC)
+        q = select(Signal).where(
+            Signal.ticker == ticker,
+            (Signal.expires_at.is_(None)) | (Signal.expires_at > now),
+        )
+        if strategy.signal_type is not None:
+            q = q.where(Signal.signal_type == strategy.signal_type)
+
+        result = await self.db.execute(q)
+        signals = list(result.scalars().all())
+        if not signals:
+            return None
+
+        score = 0
+        for s in signals:
+            if s.direction == SignalDirection.bullish:
+                score += s.strength or 0
+            elif s.direction == SignalDirection.bearish:
+                score -= s.strength or 0
+            # neutral contributes 0
+
+        if score > 0:
+            direction = SignalDirection.bullish
+        elif score < 0:
+            direction = SignalDirection.bearish
+        else:
+            direction = SignalDirection.neutral
+
+        # Strongest signal in the net direction → use as trigger record
+        if direction == SignalDirection.bullish:
+            same_dir = [s for s in signals if s.direction == SignalDirection.bullish]
+        elif direction == SignalDirection.bearish:
+            same_dir = [s for s in signals if s.direction == SignalDirection.bearish]
+        else:
+            same_dir = []
+        trigger = max(same_dir, key=lambda s: s.strength) if same_dir else None
+
+        return {
+            "direction": direction,
+            "score": score,
+            "abs_score": abs(score),
+            "rule_count": len(signals),
+            "trigger_signal": trigger,
+        }
+
     # ── Per-signal dispatch ─────────────────────────────────────────────
 
     async def _handle_signal_for_strategy(
@@ -148,36 +210,47 @@ class AutoTraderService:
         portfolio: Portfolio,
         signal: Signal,
     ) -> str | None:
-        """Decide what to do with one (strategy, signal) pair. Returns
-        action label or None if no action taken."""
-        # Ticker filter
+        """Treat the incoming signal as a trigger to re-evaluate the net
+        verdict for (strategy, ticker), then act on the verdict rather than
+        on the raw signal. This eliminates same-scan flip-flops where a
+        single weak opposing rule reverses a strong consensus.
+        """
+        # Ticker filter (unchanged — applies before verdict math)
         if strategy.tickers:
             allowed = {t.strip().upper() for t in strategy.tickers.split(",") if t.strip()}
             if signal.ticker.upper() not in allowed:
                 return None
 
-        # Find existing open position in this strategy on this ticker
+        verdict = await self._consolidated_verdict(strategy, signal.ticker)
+        if verdict is None:
+            return None
+
+        # Strength gate now applies to |net score|, not individual strength.
+        if verdict["abs_score"] < strategy.min_strength:
+            return None
+
         open_pos = await self._get_open_position(strategy.id, signal.ticker)
+        net_direction = verdict["direction"]
+        # Use the dominant signal as the trade's trigger record. Fall back
+        # to the incoming signal if the verdict has no same-direction rule
+        # (which only happens for a neutral verdict — already filtered above).
+        trigger_signal = verdict["trigger_signal"] or signal
 
-        # Case 1: signal matches strategy filter AND direction → maybe BUY or EXTEND
-        if self._signal_matches_filter(strategy, signal):
+        # Direction match between verdict and strategy: open or extend
+        if strategy.direction is None or net_direction == strategy.direction:
             if open_pos is None:
-                # New entry
-                opened = await self._open_position(strategy, portfolio, signal)
+                opened = await self._open_position(strategy, portfolio, trigger_signal)
                 return "opened" if opened else None
-            else:
-                # Already in this direction — extend hold if enabled
-                if strategy.extend_on_continuing_signal and open_pos.direction == signal.direction:
-                    self._extend_hold(strategy, open_pos)
-                    return "extended"
-                return None
+            if strategy.extend_on_continuing_signal and open_pos.direction == net_direction:
+                self._extend_hold(strategy, open_pos)
+                return "extended"
+            return None
 
-        # Case 2: opposing-direction signal on a held position → maybe CLOSE early
+        # Direction opposes held position: close (if enabled and past min_hold)
         if (
             open_pos is not None
             and strategy.exit_on_opposite_signal
-            and self._is_opposite_direction(open_pos.direction, signal.direction)
-            and self._meets_strength_threshold(strategy, signal)
+            and self._is_opposite_direction(open_pos.direction, net_direction)
         ):
             age = (datetime.now(UTC) - open_pos.entry_at).days
             if age >= strategy.min_hold_days:

@@ -16,6 +16,7 @@ Take-profit: 2× the risk (1:2 R:R).
 
 from datetime import UTC, datetime, timedelta
 
+import numpy as np
 import pandas as pd
 import ta
 import ta.momentum
@@ -26,6 +27,132 @@ import ta.volume
 from app.models.signal import Signal, SignalDirection, SignalType
 from app.services.market_data import MarketDataService
 from app.signals.base import BaseSignalProvider
+
+# ── Flag pattern detection ────────────────────────────────────────────────
+# Bull/bear flag = strong directional move ("pole") followed by tight
+# consolidation against that move ("flag"), broken by a continuation move
+# in the original direction. Conservative thresholds — these fire rarely
+# but with high conviction.
+
+FLAG_POLE_MIN_PCT = 0.10        # at least 10% pole (over ~10 bars)
+FLAG_RANGE_MAX_PCT = 0.05       # consolidation range < 5% of price
+FLAG_VOL_RATIO_MIN = 1.2        # breakout day volume > 1.2× 20-day avg
+FLAG_CONSOLIDATION_BARS = 4     # tight range over the last 4 bars before today
+
+
+def _detect_bull_flag(df: pd.DataFrame) -> dict | None:
+    """Bull flag breakout on the latest bar — pole up, tight flat/down
+    flag, today's close breaks above the flag's highs on rising volume.
+
+    Returns descriptor dict if pattern fires; None otherwise.
+    """
+    if len(df) < 15:
+        return None
+
+    close = df["Close"].to_numpy()
+    high = df["High"].to_numpy()
+    low = df["Low"].to_numpy()
+    vol = df["Volume"].to_numpy()
+    n = FLAG_CONSOLIDATION_BARS
+
+    # Pole: rise from the low of bars 10..n+1 ago into the high of bars 5..n+1 ago
+    pole_low = float(np.min(close[-(10 + n + 1) : -(n + 1)]))
+    pole_high = float(np.max(close[-(5 + n + 1) : -(n + 1)]))
+    if pole_low <= 0:
+        return None
+    pole_pct = (pole_high - pole_low) / pole_low
+    if pole_pct < FLAG_POLE_MIN_PCT:
+        return None
+
+    # Flag: the n bars immediately before today. Tight range + flat/down slope.
+    flag_close = close[-(n + 1) : -1]
+    flag_high_max = float(np.max(high[-(n + 1) : -1]))
+    flag_low_min = float(np.min(low[-(n + 1) : -1]))
+    flag_mean = float(np.mean(flag_close))
+    if flag_mean <= 0:
+        return None
+    flag_range_pct = (flag_high_max - flag_low_min) / flag_mean
+    if flag_range_pct > FLAG_RANGE_MAX_PCT:
+        return None
+    # Slope: linear fit over the flag bars; should be <= 0 (flag pulls back
+    # against the pole, or sits flat). Allow small positive noise.
+    slope = float(np.polyfit(np.arange(n), flag_close, 1)[0])
+    if slope > flag_mean * 0.005:  # > 0.5% per bar uptrend disqualifies
+        return None
+
+    # Breakout: today's close above the flag's highest close, with volume.
+    today_close = float(close[-1])
+    breakout_level = float(np.max(flag_close))
+    if today_close <= breakout_level:
+        return None
+
+    avg_vol = float(np.mean(vol[-21:-1])) if len(vol) >= 21 else float(np.mean(vol[:-1]))
+    if avg_vol <= 0 or vol[-1] < avg_vol * FLAG_VOL_RATIO_MIN:
+        return None
+
+    return {
+        "pole_pct": pole_pct,
+        "flag_range_pct": flag_range_pct,
+        "breakout_level": breakout_level,
+        "today_close": today_close,
+        "vol_ratio": vol[-1] / avg_vol,
+    }
+
+
+def _detect_bear_flag(df: pd.DataFrame) -> dict | None:
+    """Bear flag breakdown on the latest bar — pole down, tight flat/up
+    flag, today's close breaks below the flag's lows on rising volume.
+    Mirror of the bull flag.
+    """
+    if len(df) < 15:
+        return None
+
+    close = df["Close"].to_numpy()
+    high = df["High"].to_numpy()
+    low = df["Low"].to_numpy()
+    vol = df["Volume"].to_numpy()
+    n = FLAG_CONSOLIDATION_BARS
+
+    # Pole: drop from the high of bars 10..n+1 ago into the low of bars 5..n+1 ago
+    pole_high = float(np.max(close[-(10 + n + 1) : -(n + 1)]))
+    pole_low = float(np.min(close[-(5 + n + 1) : -(n + 1)]))
+    if pole_high <= 0:
+        return None
+    pole_pct = (pole_high - pole_low) / pole_high
+    if pole_pct < FLAG_POLE_MIN_PCT:
+        return None
+
+    # Flag: tight range with flat/up slope (against the down pole).
+    flag_close = close[-(n + 1) : -1]
+    flag_high_max = float(np.max(high[-(n + 1) : -1]))
+    flag_low_min = float(np.min(low[-(n + 1) : -1]))
+    flag_mean = float(np.mean(flag_close))
+    if flag_mean <= 0:
+        return None
+    flag_range_pct = (flag_high_max - flag_low_min) / flag_mean
+    if flag_range_pct > FLAG_RANGE_MAX_PCT:
+        return None
+    slope = float(np.polyfit(np.arange(n), flag_close, 1)[0])
+    if slope < -flag_mean * 0.005:  # >0.5% per bar drop disqualifies
+        return None
+
+    # Breakdown: today's close below the flag's lowest close, with volume.
+    today_close = float(close[-1])
+    breakdown_level = float(np.min(flag_close))
+    if today_close >= breakdown_level:
+        return None
+
+    avg_vol = float(np.mean(vol[-21:-1])) if len(vol) >= 21 else float(np.mean(vol[:-1]))
+    if avg_vol <= 0 or vol[-1] < avg_vol * FLAG_VOL_RATIO_MIN:
+        return None
+
+    return {
+        "pole_pct": pole_pct,
+        "flag_range_pct": flag_range_pct,
+        "breakdown_level": breakdown_level,
+        "today_close": today_close,
+        "vol_ratio": vol[-1] / avg_vol,
+    }
 
 
 class TechnicalSignalProvider(BaseSignalProvider):
@@ -241,5 +368,30 @@ class TechnicalSignalProvider(BaseSignalProvider):
                     f"Volume spike: {vol_ratio:.1f}× the 20-day average. "
                     f"Unusual interest — {'buying' if direction == SignalDirection.bullish else 'selling'} pressure.",
                 ))
+
+        # ── Bull / Bear flag breakout ─────────────────────────────────────────
+        # Strong directional move + tight consolidation + breakout on volume.
+        # Rare-fire, high-conviction pattern — strength 4.
+        bull_flag = _detect_bull_flag(df)
+        if bull_flag is not None:
+            signals.append(make_signal(
+                SignalDirection.bullish, 4,
+                "BULL_FLAG_BREAKOUT",
+                f"Bull flag breakout: {bull_flag['pole_pct'] * 100:.1f}% pole, "
+                f"{bull_flag['flag_range_pct'] * 100:.1f}% flag range, "
+                f"closed above ${bull_flag['breakout_level']:.2f} on "
+                f"{bull_flag['vol_ratio']:.1f}× avg volume. Continuation long setup.",
+            ))
+
+        bear_flag = _detect_bear_flag(df)
+        if bear_flag is not None:
+            signals.append(make_signal(
+                SignalDirection.bearish, 4,
+                "BEAR_FLAG_BREAKDOWN",
+                f"Bear flag breakdown: {bear_flag['pole_pct'] * 100:.1f}% pole, "
+                f"{bear_flag['flag_range_pct'] * 100:.1f}% flag range, "
+                f"closed below ${bear_flag['breakdown_level']:.2f} on "
+                f"{bear_flag['vol_ratio']:.1f}× avg volume. Continuation short setup.",
+            ))
 
         return signals
