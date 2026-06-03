@@ -27,6 +27,17 @@ class PortfolioService:
         result = await self.db.execute(select(Portfolio).where(Portfolio.id == portfolio_id))
         return result.scalar_one_or_none()
 
+    async def is_auto_managed(self, portfolio_id: int) -> bool:
+        """True if any Strategy targets this portfolio. Strategies own the
+        trade ledger for their portfolio — letting the user add/edit/delete
+        trades manually would desync StrategyTrade.quantity from the
+        actual Position, leading to phantom-share errors on auto-close."""
+        from app.models.strategy import Strategy
+        result = await self.db.execute(
+            select(Strategy.id).where(Strategy.portfolio_id == portfolio_id).limit(1)
+        )
+        return result.first() is not None
+
     async def list_for_user(self, user_id: int) -> list[Portfolio]:
         result = await self.db.execute(
             select(Portfolio).where(Portfolio.user_id == user_id, Portfolio.is_active.is_(True))
@@ -382,6 +393,7 @@ class PortfolioService:
 
         return PortfolioSummary(
             **{c.key: getattr(portfolio, c.key) for c in portfolio.__table__.columns},
+            is_auto_managed=await self.is_auto_managed(portfolio.id),
             total_value=_safe(total_value) or 0.0,
             total_cost=_safe(total_cost) or 0.0,
             total_pnl=_safe(total_pnl) or 0.0,

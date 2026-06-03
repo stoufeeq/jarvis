@@ -16,6 +16,9 @@ export interface Portfolio {
   position_count?: number;
   initial_cash?: number | null;
   cash_balance?: number | null;
+  // Set by backend when any Strategy targets this portfolio. UI hides
+  // manual trade actions when true so they can't desync the auto-trader.
+  is_auto_managed?: boolean;
 }
 
 export interface Position {

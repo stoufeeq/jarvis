@@ -363,12 +363,14 @@ export default function PortfolioPage() {
               >
                 ↻ Refresh
               </button>
-              <button
-                onClick={() => setShowAddTrade((v) => !v)}
-                className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90"
-              >
-                + Add Trade
-              </button>
+              {!summary?.is_auto_managed && (
+                <button
+                  onClick={() => setShowAddTrade((v) => !v)}
+                  className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90"
+                >
+                  + Add Trade
+                </button>
+              )}
             </>
           )}
           <button
@@ -643,9 +645,18 @@ export default function PortfolioPage() {
             </div>
           </div>
 
-          {/* Paper trading: cash balance + quick trade widget */}
+          {/* Auto-managed portfolio banner: explain why manual actions are hidden */}
+          {summary?.is_auto_managed && (
+            <div className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-3 text-sm text-blue-300">
+              This portfolio is managed by an auto-trader strategy. Manual trades
+              are disabled to keep the strategy ledger in sync. Pause or delete
+              the strategy if you need to record trades by hand.
+            </div>
+          )}
+
+          {/* Paper trading: cash balance + (optional) quick trade widget */}
           {isPaper && summary && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className={`grid grid-cols-1 gap-4 ${summary.is_auto_managed ? "" : "md:grid-cols-3"}`}>
               <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
                 <p className="text-xs text-amber-500 uppercase tracking-wider font-medium">Virtual Cash</p>
                 <p className="text-2xl font-bold mt-1">
@@ -655,6 +666,7 @@ export default function PortfolioPage() {
                   of {formatCurrency(summary.initial_cash ?? 0, "USD")} initial
                 </p>
               </div>
+              {!summary.is_auto_managed && (
               <div className="md:col-span-2 rounded-xl border border-border bg-card p-4">
                 <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium mb-3">Quick Trade</p>
                 <div className="flex flex-wrap items-end gap-2">
@@ -695,6 +707,7 @@ export default function PortfolioPage() {
                 </div>
                 <p className="text-xs text-muted-foreground mt-2">Market order at the current quote price.</p>
               </div>
+              )}
             </div>
           )}
 
@@ -850,24 +863,28 @@ export default function PortfolioPage() {
                             {mv(formatCurrency(t.quantity * t.price, t.currency))}
                           </td>
                           <td className="px-4 py-3 text-right">
-                            <div className="flex gap-2 justify-end">
-                              <button
-                                onClick={() => handleEditOpen(t)}
-                                className="text-xs px-2 py-1 rounded bg-secondary hover:bg-secondary/80"
-                              >
-                                Edit
-                              </button>
-                              <button
-                                onClick={() => {
-                                  if (confirm(`Delete this ${t.action} trade for ${t.ticker}?`))
-                                    deleteTradeMutation.mutate(t.id);
-                                }}
-                                disabled={deleteTradeMutation.isPending}
-                                className="text-xs px-2 py-1 rounded bg-destructive/20 text-red-400 hover:bg-destructive/40 disabled:opacity-50"
-                              >
-                                Delete
-                              </button>
-                            </div>
+                            {summary?.is_auto_managed ? (
+                              <span className="text-xs text-muted-foreground/60 italic">auto</span>
+                            ) : (
+                              <div className="flex gap-2 justify-end">
+                                <button
+                                  onClick={() => handleEditOpen(t)}
+                                  className="text-xs px-2 py-1 rounded bg-secondary hover:bg-secondary/80"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    if (confirm(`Delete this ${t.action} trade for ${t.ticker}?`))
+                                      deleteTradeMutation.mutate(t.id);
+                                  }}
+                                  disabled={deleteTradeMutation.isPending}
+                                  className="text-xs px-2 py-1 rounded bg-destructive/20 text-red-400 hover:bg-destructive/40 disabled:opacity-50"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            )}
                           </td>
                         </tr>
                       );

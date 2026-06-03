@@ -32,6 +32,9 @@ class PortfolioRead(BaseModel):
     created_at: datetime
     initial_cash: float | None = None
     cash_balance: float | None = None
+    # True if any Strategy targets this portfolio. Manual trade endpoints
+    # reject when this is set, so the UI hides the corresponding actions.
+    is_auto_managed: bool = False
 
     model_config = {"from_attributes": True}
 

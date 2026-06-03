@@ -28,6 +28,23 @@ def _assert_owner(portfolio, user: User):
         raise ForbiddenError()
 
 
+async def _assert_not_auto_managed(svc: "PortfolioService", portfolio_id: int) -> None:
+    """Block manual trade mutations on portfolios owned by an auto-trader
+    strategy — the strategy tracks its own per-trade quantity and a manual
+    trade slipped in would silently desync the StrategyTrade ledger from
+    the Position table, eventually stranding strategy_trades in 'open' when
+    the auto-close tries to sell shares that no longer exist."""
+    if await svc.is_auto_managed(portfolio_id):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This portfolio is managed by an auto-trader strategy. "
+                "Pause or delete the strategy first if you need to make "
+                "manual trades."
+            ),
+        )
+
+
 @router.get("/", response_model=list[PortfolioSummary])
 async def list_portfolios(
     user: User = Depends(get_current_user),
@@ -64,6 +81,7 @@ async def execute_paper_trade(
     if not p:
         raise NotFoundError("Portfolio not found")
     _assert_owner(p, user)
+    await _assert_not_auto_managed(svc, portfolio_id)
     try:
         return await svc.execute_paper_trade(
             portfolio=p,
@@ -162,6 +180,7 @@ async def add_trade(
     if not p:
         raise NotFoundError("Portfolio not found")
     _assert_owner(p, user)
+    await _assert_not_auto_managed(svc, portfolio_id)
     return await svc.add_trade(portfolio_id, payload)
 
 
@@ -178,6 +197,7 @@ async def update_trade(
     if not p:
         raise NotFoundError("Portfolio not found")
     _assert_owner(p, user)
+    await _assert_not_auto_managed(svc, portfolio_id)
     result = await db.execute(
         select(Trade).where(Trade.id == trade_id, Trade.portfolio_id == portfolio_id)
     )
@@ -199,6 +219,7 @@ async def delete_trade(
     if not p:
         raise NotFoundError("Portfolio not found")
     _assert_owner(p, user)
+    await _assert_not_auto_managed(svc, portfolio_id)
     result = await db.execute(
         select(Trade).where(Trade.id == trade_id, Trade.portfolio_id == portfolio_id)
     )
@@ -221,6 +242,7 @@ async def import_csv(
     if not p:
         raise NotFoundError("Portfolio not found")
     _assert_owner(p, user)
+    await _assert_not_auto_managed(svc, portfolio_id)
     content = await file.read()
     count = await svc.import_from_csv(portfolio_id, content)
     return {"imported": count}
