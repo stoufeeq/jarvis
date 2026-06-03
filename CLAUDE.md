@@ -296,6 +296,21 @@ Index: (ticker, published_at)
 
 ---
 
+### DailyBriefing
+| Field | Type | Notes |
+|---|---|---|
+| id | int PK | |
+| user_id | int FK(users) | CASCADE |
+| briefing_date | Date | indexed |
+| overall_sentiment | str(20) | bullish, neutral, cautious, bearish |
+| summary | Text nullable | bullet-point summary |
+| content_json | Text | full Gemini JSON response |
+| generated_at | DateTime tz | indexed |
+
+No unique constraint on (user_id, briefing_date) — multiple briefings per day allowed.
+
+---
+
 ### Account / AccountBalance / AccountTransaction
 **Account**: id, user_id FK CASCADE, name str(255), currency str(3) default "USD", timestamps
 
@@ -394,6 +409,15 @@ POST /scan deletes all existing signals for that ticker before writing fresh one
 | GET | /portfolio-review/{portfolio_id} | — | {review} |
 | GET | /news-digest | ticker? | {digest} |
 
+### Briefing — `/api/v1/briefing`
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | /today | — | BriefingDetail |
+| POST | /regenerate | — | BriefingDetail |
+| GET | /history | limit? | list[BriefingRead] |
+| GET | /{id} | — | BriefingDetail |
+| DELETE | /{id} | — | 204 |
+
 ### Accounts — `/api/v1/accounts`
 | Method | Path | Body | Response |
 |---|---|---|---|
@@ -464,6 +488,15 @@ To swap provider: replace the `_fetch()` inner functions with Polygon.io API cal
 - Uses `certifi.where()` as CA bundle (fixes macOS SSL cert verification).
 - `alert_triggered_email(ticker, alert_type, threshold, price)` → (subject, html).
 
+### BriefingService (`app/services/briefing.py`)
+- `get_or_create_today(user)` — returns cached briefing for today, or generates a new one via Gemini.
+- `regenerate_today(user)` — always generates a new briefing (keeps old ones in history).
+- `get_history(user_id, limit)` — returns past briefings ordered by `generated_at desc`.
+- `_build_context(user)` — assembles portfolio positions, watchlist tickers, recent signals, news, S&P 500 movers, macro events.
+- `_call_gemini(context)` — sends assembled context to Gemini, returns structured JSON with `overall_sentiment`, `portfolio`, `watchlist_opportunities`, `sp500_opportunities`, `summary_bullets`.
+- `_regroup_tickers(content, context)` — post-processes Gemini response to ensure tickers are in the correct section (portfolio vs watchlist vs S&P 500). Priority: portfolio > watchlist > other. No tickers are discarded.
+- Multiple briefings per day allowed (unique constraint dropped via migration `a1b2c3d4e5f6`).
+
 ### AIAdvisor (`app/services/ai_advisor.py`)
 - Uses Gemini `gemini-2.5-flash` model.
 - `chat(message, portfolio_context)` — multi-turn via conversation history.
@@ -479,16 +512,19 @@ Data: 2 years daily OHLCV via `get_ohlcv_dataframe`. Uses `ta` library.
 
 | Signal | Direction | Strength | Condition |
 |---|---|---|---|
-| RSI < 30 | bullish | 4 | oversold |
-| RSI > 70 | bearish | 4 | overbought |
 | RSI crosses 50 | bullish/bearish | 2 | momentum shift (5-bar lookback) |
-| MACD crossover | bullish/bearish | 4 | MACD line crosses signal (5-bar lookback) |
 | Price vs SMA50 cross | bullish/bearish | 3 | price crosses 50-day MA |
 | Golden cross | bullish | 5 | SMA50 crosses above SMA200 |
 | Death cross | bearish | 5 | SMA50 crosses below SMA200 |
 | BB lower bounce | bullish | 3 | price bounces off lower Bollinger Band |
 | BB upper rejection | bearish | 3 | price rejected at upper Bollinger Band |
 | Volume spike | bullish/bearish | 3 | volume > 2× 20-day average |
+| Bull flag breakout | bullish | 4 | ≥10% pole + tight 4-bar flag + close above flag highs on ≥1.2× avg vol |
+| Bear flag breakdown | bearish | 4 | mirror — drop pole + flat/up flag + close below flag lows on volume |
+
+**Removed 2026-06-03 (net-losing per backtest):** RSI<30 / RSI>70 (strength 4),
+MACD crossover (strength 4). Combined sample of 90k outcomes showed -2.72% avg
+return / 40% hit rate. See the matching code comments.
 
 Stop-loss: 1.5× ATR. Take-profit: 2× risk (1:2 R:R). Timeframe: "1d". Expires: 5 days.
 `crossed_above(a, b, lookback=5)` / `crossed_below(a, b, lookback=5)` helpers detect crossovers within the last N bars.
@@ -515,8 +551,8 @@ Near-term expiries only (≤ 45 DTE, up to 3 expiries).
 |---|---|---|---|
 | UW_SWEEP_BULLISH | bullish | 5 | Unusual Whales real-time bullish call sweep (key required) |
 | UW_SWEEP_BEARISH | bearish | 5 | Unusual Whales real-time bearish put sweep (key required) |
-| UNUSUAL_CALL_SWEEP | bullish | 4 | OTM call: vol/OI > 3×, vol > 200, premium > $25k |
-| UNUSUAL_PUT_SWEEP | bearish | 4 | OTM put: vol/OI > 3×, vol > 200, premium > $25k |
+| ~~UNUSUAL_CALL_SWEEP~~ | ~~bullish~~ | ~~4~~ | **Removed 2026-06-03 — breakeven (+0.09%) over 190k outcomes** |
+| ~~UNUSUAL_PUT_SWEEP~~ | ~~bearish~~ | ~~4~~ | **Removed 2026-06-03 — same** |
 | BULLISH_PC_FLOW | bullish | 3 | Put/call ratio < 0.5 (heavy call buying), total vol ≥ 500 |
 | BEARISH_PC_FLOW | bearish | 3 | Put/call ratio > 2.5 (heavy put buying), total vol ≥ 500 |
 | BULLISH_NET_PREMIUM | bullish | 3 | Net call premium > $500k over near-term expiries |
@@ -592,10 +628,12 @@ Data: `yfinance Ticker.info` dict (no paid API). Expires: 30 days. Timeframe: "s
 | / | Root | Redirects to /dashboard |
 | /login | Login | JWT login form |
 | /register | Register | User registration |
-| /dashboard | Dashboard | Portfolio totals (FX-normalised), Liquidity card, recent signals (limit 10) |
+| /dashboard | Dashboard | Portfolio totals (FX-normalised, live quotes), Liquidity card, recent signals, briefing card, top movers |
+| /briefing | Briefing | AI daily briefing with portfolio/watchlist/S&P 500 sections, history sidebar, regenerate |
 | /portfolio | Portfolio | Portfolio list, positions table (with P&L), trades table, IBKR CSV import, multi-currency |
 | /watchlist | Watchlist | Add/remove tickers, live prices (30s refresh) |
 | /signals | Signals | Two tabs: "Signals" (all signal types incl. fundamental, filters, Scan Now) + "Options Flow" |
+| /heatmap | Heatmap | S&P 500 treemap + bubbles chart, sector/portfolio/watchlist filters, shared across both views |
 | /alerts | Alerts | Create/edit/delete/rearm alerts, triggered state |
 | /advisor | AI Advisor | Chat UI, resizable history sidebar (desktop), overlay drawer (mobile) |
 | /accounts | Accounts | Cash accounts with multi-currency balances, deposit/withdraw, transaction history |
@@ -633,8 +671,24 @@ Data: `yfinance Ticker.info` dict (no paid API). Expires: 30 days. Timeframe: "s
 - Invalidates `["alerts"]` React Query cache
 
 ### NotificationBell (`components/ui/NotificationBell.tsx`)
-- Badge count = triggered + not acknowledged alerts
-- Dropdown with Dismiss (acknowledge), Re-arm, Delete per notification
+- Three notification types: triggered alerts (amber), strong signals (blue), daily briefing (green)
+- Badge count = total unread across all types
+- Alerts: Dismiss (acknowledge), Re-arm, Delete actions
+- Signals: strength >= 4, last 24 hours; dismissals persisted to `localStorage` (`jarvis_dismissed_signals`)
+- Briefing: shows when today's briefing is available; dismissal persisted to `localStorage` (`jarvis_dismissed_briefing`)
+- Clicking a notification navigates to the relevant page (Alerts, Signals, Briefing)
+
+### Live Quote Overlay (Portfolio + Dashboard)
+- Portfolio page and Dashboard page recompute summary card totals (Total Value, P&L, Today's Change) from live quotes client-side
+- Falls back to DB-cached values when live quotes haven't loaded yet
+- `refetchInterval: 60_000` for periodic live quote polling
+- Portfolio position table also uses live quote prices for Current Price, P&L, and P&L %
+
+### AnimatedNumber (`components/ui/AnimatedNumber.tsx`)
+- Rolling number animation on summary cards when values update
+- Ease-out cubic easing over 600ms
+- Parses formatted currency strings, animates the numeric portion, preserves prefix/suffix
+- Non-numeric values (masked/privacy mode, dashes) render instantly without animation
 
 ---
 
@@ -709,6 +763,8 @@ Migrations run automatically on API container startup (`docker-entrypoint.sh` ru
 | fac24e233009 | Remove unique constraint on sec_accession_number (→ index only) |
 | c3d4e5f6a7b8 | Add accounts, account_balances, account_transactions tables |
 | d4e5f6a7b8c9 | Add previous_close column to positions |
+| f2a3b4c5d6e7 | Add daily_briefings table |
+| a1b2c3d4e5f6 | Drop unique constraint on daily_briefings (user_id, briefing_date) — allows multiple per day |
 
 ---
 
@@ -742,6 +798,29 @@ date-fns@^3.6, react-hot-toast@^2.4
 
 ---
 
+## Deployment
+
+### Local Development
+See "Development Environment Convention" at the top. Only Postgres + Redis in Docker; all Python processes run locally.
+
+### Hetzner VPS (Production)
+- **Server:** Hetzner CX23 (2 vCPU, 4 GB RAM, 40 GB NVMe), Ubuntu 24.04
+- **All services in Docker:** Postgres, Redis, backend, worker, beat, frontend — via `docker-compose.yml` + `docker-compose.prod.yml` override
+- **Images:** Built in GitHub Actions, pushed to GitHub Container Registry (`ghcr.io/stoufeeq/jarvis-backend`, `ghcr.io/stoufeeq/jarvis-frontend`)
+- **CI/CD:** `.github/workflows/deploy-hetzner.yml` — on push to `main`: build images → push to GHCR → SSH into server → git pull → pull images → run migrations → `docker compose up -d --force-recreate`
+- **`docker-compose.prod.yml`** overrides `build:` directives with GHCR image references so compose uses pre-built images
+- **Backend `.env` on server:** uses Docker internal hostnames (`postgres`, `redis`) instead of `localhost`
+- **Frontend:** runs as standalone container (`docker run -d --name jarvis-frontend -p 3000:3000`)
+- **HTTPS:** Not yet configured. Planned via Caddy reverse proxy + Let's Encrypt once domain DNS is pointed.
+- **GitHub Secrets required:** `HETZNER_HOST`, `HETZNER_SSH_KEY`, `GHCR_PAT`
+
+### Azure Container Apps (Disabled, kept as fallback)
+- `.github/workflows/deploy.yml` — auto-deploy disabled (push trigger commented out), manual `workflow_dispatch` still available
+- Resources downsized: API 0.25 vCPU/0.5 GB, frontend 0.25 vCPU/0.5 GB, worker 0.5 vCPU/1 GB, beat 0.25 vCPU/0.5 GB
+- Azure Postgres Flexible (Standard_B1ms), Azure Cache Redis (Basic C0), ACR Basic
+
+---
+
 ## Known Issues / Notes
 
 - **yfinance `.news`** broken in v0.2.44 — use Yahoo Finance RSS feed instead (`feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}`) with `User-Agent: Mozilla/5.0` header.
@@ -755,6 +834,10 @@ date-fns@^3.6, react-hot-toast@^2.4
 - **Docker** — see "Development Environment Convention" section at the top. Only Postgres and Redis run in Docker; all Python processes run locally.
 - **Azure stale revisions** — `az containerapp update` creates a new revision but doesn't deactivate old ones. The deploy workflow now auto-deactivates stale revisions after each update. If Today's Change shows 0 on Azure, check that only one revision of `jarvis-worker` is active (`az containerapp revision list --name jarvis-worker --resource-group jarvis`).
 - **Today's Change** — computed from `current_price - previous_close` on the Position model (both written by Celery worker). Shows 0 until the worker has run at least once after deployment. Shows correctly 0 when markets are closed (prices equal previous close).
+- **AI signal providers are opt-in** — `AINewsSignalProvider` and `CrossImpactSignalProvider` are excluded from automatic Celery scans to conserve Gemini quota. They only run when `include_ai=True` is passed (via toggle on Signals page). Celery always runs with `include_ai=False`.
+- **Briefing ticker regroup** — Gemini sometimes misclassifies tickers across portfolio/watchlist/S&P 500 sections. `_regroup_tickers()` post-processes the response to redistribute items to the correct section. No tickers are discarded.
+- **PortfolioService.get_summary()** returns a Pydantic `PortfolioSummary` object (not a dict). Access fields as attributes, not `.get()`.
+- **Portfolio/Dashboard summary cards** — recompute totals client-side from live quotes (60s polling). DB-cached values from `get_summary()` are used as fallback until live quotes load.
 
 ---
 
@@ -780,6 +863,11 @@ date-fns@^3.6, react-hot-toast@^2.4
 18. Dashboard FX normalisation (all portfolio values converted to display currency via per-portfolio FX rates)
 19. Today's Change card (computed from DB-persisted previous_close, works across API/worker container boundary)
 20. PWA support (manifest.json, viewport meta, iOS home screen install, safe-area insets, 100dvh layout)
+21. Daily AI Briefing (Gemini-generated pre-market briefing with portfolio/watchlist/S&P 500 analysis, history, regenerate)
+22. Heatmap filters (sector, portfolio, watchlist filters applied to both treemap and bubbles views)
+23. Live quote overlay (portfolio + dashboard summary cards recompute from live quotes, 60s polling)
+24. Animated summary cards (rolling number animation on value changes)
+25. Notification bell expansion (alerts + strong signals + briefing availability)
 
 ---
 

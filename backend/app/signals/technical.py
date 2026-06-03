@@ -176,9 +176,8 @@ class TechnicalSignalProvider(BaseSignalProvider):
 
         # ── Indicators ────────────────────────────────────────────────────────
         rsi = ta.momentum.RSIIndicator(close=close, window=14).rsi()
-        macd_obj = ta.trend.MACD(close=close, window_fast=12, window_slow=26, window_sign=9)
-        macd_line = macd_obj.macd()
-        macd_signal_line = macd_obj.macd_signal()
+        # MACD removed 2026-06-03 — crossover rule was a net loser, see
+        # the RSI-extreme removal comment further down for context.
         sma50 = ta.trend.SMAIndicator(close=close, window=50).sma_indicator()
         sma200 = ta.trend.SMAIndicator(close=close, window=200).sma_indicator()
         bb = ta.volatility.BollingerBands(close=close, window=20)
@@ -255,21 +254,12 @@ class TechnicalSignalProvider(BaseSignalProvider):
                     return True
             return False
 
-        # ── RSI extreme levels ────────────────────────────────────────────────
-        if not rsi.empty:
-            rsi_val = float(rsi.iloc[-1])
-            if rsi_val < 30:
-                signals.append(make_signal(
-                    SignalDirection.bullish, 4,
-                    f"RSI={rsi_val:.1f}",
-                    f"RSI oversold at {rsi_val:.1f} (< 30). Mean-reversion long opportunity.",
-                ))
-            elif rsi_val > 70:
-                signals.append(make_signal(
-                    SignalDirection.bearish, 4,
-                    f"RSI={rsi_val:.1f}",
-                    f"RSI overbought at {rsi_val:.1f} (> 70). Potential short or exit.",
-                ))
+        # ── RSI extreme levels — REMOVED 2026-06-03 ──────────────────────────
+        # June 2026 backtest sweep showed RSI overbought/oversold (strength 4)
+        # was a net loser: 90k outcomes at -2.72% per trade, 40.2% hit rate
+        # (combined with MACD crossovers which shared the strength-4 bucket).
+        # Mean-reversion at RSI extremes doesn't work on our daily-cadence
+        # watchlist in practice.
 
         # ── RSI cross 50-line (momentum shift) ────────────────────────────────
         if len(rsi.dropna()) >= self.CROSSOVER_LOOKBACK + 1:
@@ -287,19 +277,10 @@ class TechnicalSignalProvider(BaseSignalProvider):
                     f"RSI crossed below 50 (now {float(rsi.iloc[-1]):.1f}) — momentum turning bearish.",
                 ))
 
-        # ── MACD crossover (within lookback window) ───────────────────────────
-        if crossed_above(macd_line, macd_signal_line, self.CROSSOVER_LOOKBACK):
-            signals.append(make_signal(
-                SignalDirection.bullish, 4,
-                "MACD_CROSS_UP",
-                "MACD line crossed above signal line — bullish momentum shift.",
-            ))
-        elif crossed_below(macd_line, macd_signal_line, self.CROSSOVER_LOOKBACK):
-            signals.append(make_signal(
-                SignalDirection.bearish, 4,
-                "MACD_CROSS_DOWN",
-                "MACD line crossed below signal line — bearish momentum shift.",
-            ))
+        # ── MACD crossover — REMOVED 2026-06-03 ──────────────────────────────
+        # Same backtest finding as RSI extreme: net loser at strength 4.
+        # MACD crossover catches the bottom of the move on lagging confirmation,
+        # so it tends to fire near reversals not trend starts.
 
         # ── Price vs 50-day SMA cross ─────────────────────────────────────────
         if len(sma50.dropna()) >= self.CROSSOVER_LOOKBACK + 1:

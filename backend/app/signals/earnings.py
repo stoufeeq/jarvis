@@ -97,11 +97,17 @@ class EarningsSignalProvider(BaseSignalProvider):
             if days_away < 0 or days_away > LOOKAHEAD_DAYS:
                 continue
 
-            # Strength based on proximity
+            # The 3-4 day window (former strength=4 bucket) was dropped on
+            # 2026-06-03 — backtest showed it as a net loser (-1.43% per
+            # trade, 39% hit rate, n=3.5k). Likely cause: that's the IV
+            # crush sweet spot where premium starts to deflate ahead of the
+            # event but the move itself hasn't happened yet. Entering 5-7
+            # days out (str=3) and 1-2 days out (str=5) both work; the
+            # middle is a trap.
             if days_away <= 2:
                 strength = 5
             elif days_away <= 4:
-                strength = 4
+                continue  # skip the IV-crush bucket entirely
             else:
                 strength = 3
 

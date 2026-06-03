@@ -103,46 +103,15 @@ class OptionsFlowSignalProvider(BaseSignalProvider):
                 ),
             ))
 
-        # ── Unusual OTM call/put sweeps from yfinance data ───────────────────
-        for call in summary.get("unusual_calls", []):
-            if call["itm"]:
-                continue  # skip ITM — less informative
-            if call["premium"] < SWEEP_PREMIUM_THRESHOLD:
-                continue
-            signals.append(make(
-                SignalDirection.bullish, 4,
-                indicators=(
-                    f"UNUSUAL_CALL_SWEEP:{ticker}{call['strike']}C:{call['expiry']}"
-                    f":VOL={call['volume']}:OI={call['open_interest']}"
-                    f":VOL/OI={call['vol_oi_ratio']}x:PREM=${call['premium']:,}"
-                ),
-                rationale=(
-                    f"Unusual call sweep on {ticker}: {call['volume']:,} contracts at ${call['strike']} "
-                    f"strike (exp {call['expiry']}), {call['vol_oi_ratio']}× normal volume. "
-                    f"${call['premium']:,} in premium — suggests institutional bullish positioning."
-                ),
-            ))
-            break  # one sweep signal per ticker is sufficient
-
-        for put in summary.get("unusual_puts", []):
-            if put["itm"]:
-                continue
-            if put["premium"] < SWEEP_PREMIUM_THRESHOLD:
-                continue
-            signals.append(make(
-                SignalDirection.bearish, 4,
-                indicators=(
-                    f"UNUSUAL_PUT_SWEEP:{ticker}{put['strike']}P:{put['expiry']}"
-                    f":VOL={put['volume']}:OI={put['open_interest']}"
-                    f":VOL/OI={put['vol_oi_ratio']}x:PREM=${put['premium']:,}"
-                ),
-                rationale=(
-                    f"Unusual put sweep on {ticker}: {put['volume']:,} contracts at ${put['strike']} "
-                    f"strike (exp {put['expiry']}), {put['vol_oi_ratio']}× normal volume. "
-                    f"${put['premium']:,} in premium — suggests institutional bearish positioning."
-                ),
-            ))
-            break
+        # ── yfinance-derived UNUSUAL_CALL/PUT_SWEEP — REMOVED 2026-06-03 ─────
+        # June 2026 backtest sweep showed these were breakeven noise:
+        # 190k outcomes at +0.09% per trade, 49.9% hit rate. Single-contract
+        # bursts flagged as "unusual" by vol/OI ratio are too noisy to act on
+        # — likely a mix of hedges, market-maker adjustments, and small
+        # institutions. Aggregate flow (PC ratio + net premium) captures the
+        # same sentiment with much better edge. The real-time Unusual Whales
+        # sweeps above (strength 5) are kept since they're gated on a paid
+        # feed that only enables when UNUSUAL_WHALES_API_KEY is set.
 
         # ── Put/Call ratio signals ────────────────────────────────────────────
         if pc_ratio is not None and call_vol + put_vol >= 500:  # need sufficient volume
