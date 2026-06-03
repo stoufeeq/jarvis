@@ -12,6 +12,7 @@ over the same date range.
 """
 
 import logging
+import math
 from datetime import UTC, date, datetime
 from typing import Literal
 
@@ -64,6 +65,11 @@ class BacktestService:
         for o in outcomes:
             entry = float(o.entry_price)
             exit_price = float(getattr(o, price_attr) or 0)
+            # NaN guard: Postgres NUMERIC can hold NaN (some pre-fix snapshot
+            # rows have it). NaN <= 0 is False, so it slips past a naive
+            # check and then poisons every subsequent sum with NaN.
+            if not math.isfinite(entry) or not math.isfinite(exit_price):
+                continue
             if entry <= 0 or exit_price <= 0:
                 continue
 
@@ -153,10 +159,19 @@ class BacktestService:
         hold_period: HoldPeriod,
         ticker: str | None,
     ) -> list[SignalOutcome]:
+        from sqlalchemy import literal_column
+
         price_col = getattr(SignalOutcome, f"price_{hold_period}")
+        # NaN guard: Postgres NUMERIC NaN compares GREATER than any finite
+        # value, so `< 'NaN'::numeric` is true only for finite numerics.
+        nan = literal_column("'NaN'::numeric")
         conditions = [
             SignalOutcome.strength >= min_strength,
-            price_col.is_not(None),  # only outcomes that have the snapshot for this hold period
+            price_col.is_not(None),
+            price_col < nan,
+            SignalOutcome.entry_price.is_not(None),
+            SignalOutcome.entry_price < nan,
+            SignalOutcome.entry_price > 0,
         ]
         if signal_type:
             conditions.append(SignalOutcome.signal_type == signal_type)
