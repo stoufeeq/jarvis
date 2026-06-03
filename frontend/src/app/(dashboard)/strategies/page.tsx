@@ -11,12 +11,30 @@ import { Plus, Trash2, Pause, Play, AlertTriangle, X } from "lucide-react";
 
 const SIGNAL_TYPES = ["technical", "insider", "ai_news", "options_flow", "fundamental", "earnings_upcoming", "macro_event", "cross_impact"];
 
+// Signal types we surface in the per-type strength override UI. The
+// backtest-driven recommendations as of 2026-06-04 are shown as hints
+// in the form so users know what each provider's "good" cutoff is.
+const OVERRIDE_TYPES: Array<{ key: string; label: string; recommended: number }> = [
+  { key: "fundamental",       label: "Fundamental",        recommended: 4 },
+  { key: "technical",         label: "Technical",          recommended: 5 },
+  { key: "options_flow",      label: "Options flow",       recommended: 3 },
+  { key: "insider",           label: "Insider",            recommended: 4 },
+  { key: "earnings_upcoming", label: "Earnings upcoming",  recommended: 3 },
+];
+
+type StrengthOverrideMap = { [type: string]: number | null };
+
+const EMPTY_OVERRIDES: StrengthOverrideMap = Object.fromEntries(
+  OVERRIDE_TYPES.map((t) => [t.key, null])
+);
+
 const DEFAULT_CREATE = {
   name: "",
   description: "",
   signal_type: null as string | null,
   direction: "bullish" as "bullish" | "bearish" | null,
   min_strength: 4,
+  signal_type_strength_overrides: { ...EMPTY_OVERRIDES } as StrengthOverrideMap,
   tickers: "",
   allocation_mode: "fixed" as "fixed" | "percent",
   allocation_value: 2000,
@@ -354,14 +372,22 @@ function CreateStrategyModal({
   const [form, setForm] = useState({ ...DEFAULT_CREATE });
 
   const create = useMutation({
-    mutationFn: () =>
-      strategiesApi.create({
+    mutationFn: () => {
+      // Drop null entries from the override map; send null when nothing's set
+      // so the backend treats the strategy as "use global min_strength only".
+      const overrides: Record<string, number> = {};
+      for (const [k, v] of Object.entries(form.signal_type_strength_overrides)) {
+        if (typeof v === "number") overrides[k] = v;
+      }
+      return strategiesApi.create({
         ...form,
         portfolio_id: portfolioId,
         description: form.description.trim() || null,
         tickers: form.tickers.trim() || null,
         signal_type: form.signal_type || null,
-      }),
+        signal_type_strength_overrides: Object.keys(overrides).length ? overrides : null,
+      });
+    },
     onSuccess: () => onCreated(),
     onError: (err: unknown) => {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -439,6 +465,37 @@ function CreateStrategyModal({
                 </select>
               </Field>
             </div>
+            <details className="rounded-md border border-border bg-input/40 px-3 py-2 text-sm">
+              <summary className="cursor-pointer text-muted-foreground">
+                Per-signal-type strength override (advanced)
+              </summary>
+              <p className="text-xs text-muted-foreground mt-2 mb-3">
+                Override the global min strength on a per-provider basis. Signals from a provider
+                below its override are excluded from the consolidated verdict. Leave any provider on
+                <em> Use global</em> to fall back to the value above. Recommended cutoffs (from the
+                2026-06-04 backtest) are shown next to each provider.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {OVERRIDE_TYPES.map((t) => (
+                  <label key={t.key} className="flex items-center gap-2 text-xs">
+                    <span className="w-32 text-muted-foreground">
+                      {t.label} <span className="opacity-60">(rec. {t.recommended})</span>
+                    </span>
+                    <select
+                      value={form.signal_type_strength_overrides[t.key] ?? ""}
+                      onChange={(e) => update("signal_type_strength_overrides", {
+                        ...form.signal_type_strength_overrides,
+                        [t.key]: e.target.value === "" ? null : parseInt(e.target.value),
+                      })}
+                      className="flex-1 px-2 py-1 rounded border border-border bg-input"
+                    >
+                      <option value="">Use global</option>
+                      {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}+ stars</option>)}
+                    </select>
+                  </label>
+                ))}
+              </div>
+            </details>
             <Field label="Restrict to tickers (comma-separated, optional)">
               <input
                 type="text"

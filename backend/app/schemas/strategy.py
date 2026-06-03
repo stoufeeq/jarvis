@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.signal import SignalDirection, SignalType
 from app.models.strategy import (
@@ -9,6 +9,27 @@ from app.models.strategy import (
     StrategyExitReason,
     StrategyTradeStatus,
 )
+
+# Accepted keys in signal_type_strength_overrides — must match SignalType enum values.
+_VALID_OVERRIDE_KEYS = {t.value for t in SignalType}
+
+
+def _validate_overrides(v: dict | None) -> dict | None:
+    """Reject unknown signal_type keys + out-of-range strength values."""
+    if v is None:
+        return None
+    if not isinstance(v, dict):
+        raise ValueError("signal_type_strength_overrides must be a dict")
+    cleaned: dict[str, int] = {}
+    for key, val in v.items():
+        if key not in _VALID_OVERRIDE_KEYS:
+            raise ValueError(f"Unknown signal type in overrides: {key!r}")
+        if not isinstance(val, int):
+            raise ValueError(f"Strength for {key} must be an int")
+        if val < 1 or val > 5:
+            raise ValueError(f"Strength for {key} must be 1..5")
+        cleaned[key] = val
+    return cleaned or None  # drop empty dict
 
 
 class StrategyCreate(BaseModel):
@@ -19,6 +40,7 @@ class StrategyCreate(BaseModel):
     signal_type: SignalType | None = None
     direction: SignalDirection | None = None
     min_strength: int = Field(default=4, ge=1, le=5)
+    signal_type_strength_overrides: dict[str, int] | None = None
     tickers: str | None = None  # comma-separated whitelist
 
     allocation_mode: AllocationMode = AllocationMode.fixed
@@ -36,6 +58,8 @@ class StrategyCreate(BaseModel):
 
     is_active: bool = True
 
+    _v_overrides = field_validator("signal_type_strength_overrides", mode="before")(_validate_overrides)
+
 
 class StrategyUpdate(BaseModel):
     name: str | None = None
@@ -43,6 +67,7 @@ class StrategyUpdate(BaseModel):
     signal_type: SignalType | None = None
     direction: SignalDirection | None = None
     min_strength: int | None = None
+    signal_type_strength_overrides: dict[str, int] | None = None
     tickers: str | None = None
 
     allocation_mode: AllocationMode | None = None
@@ -60,6 +85,8 @@ class StrategyUpdate(BaseModel):
 
     is_active: bool | None = None
 
+    _v_overrides = field_validator("signal_type_strength_overrides", mode="before")(_validate_overrides)
+
 
 class StrategyRead(BaseModel):
     id: int
@@ -71,6 +98,7 @@ class StrategyRead(BaseModel):
     signal_type: SignalType | None
     direction: SignalDirection | None
     min_strength: int
+    signal_type_strength_overrides: dict[str, int] | None = None
     tickers: str | None
 
     allocation_mode: AllocationMode

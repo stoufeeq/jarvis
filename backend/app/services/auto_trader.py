@@ -170,6 +170,23 @@ class AutoTraderService:
         if not signals:
             return None
 
+        # Per-signal-type strength gate. Each signal must meet either the
+        # type-specific override or the strategy's global min_strength as
+        # the fallback. Empty/null override map = global gate for everything.
+        # This lets a strategy say "fundamental signals must be ≥4,
+        # technical must be ≥5, options_flow must be ≥3" — the per-rule
+        # quality bar identified by the 2026-06-03 rule-level backtest.
+        overrides: dict = strategy.signal_type_strength_overrides or {}
+        if overrides:
+            signals = [
+                s for s in signals
+                if (s.strength or 0) >= overrides.get(
+                    s.signal_type.value, strategy.min_strength
+                )
+            ]
+            if not signals:
+                return None
+
         score = 0
         for s in signals:
             if s.direction == SignalDirection.bullish:

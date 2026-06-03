@@ -28,6 +28,7 @@ from sqlalchemy import (
     String,
     Text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -78,6 +79,15 @@ class Strategy(TimestampMixin, Base):
         Enum(SignalDirection, name="signal_direction"), nullable=True
     )
     min_strength: Mapped[int] = mapped_column(SmallInteger, default=4, nullable=False)
+    # Per-signal-type strength override: {"fundamental": 4, "technical": 5,
+    # "options_flow": 3, "earnings_upcoming": 3, "insider": 4}. When a key
+    # is present, the auto-trader uses that as the gate for signals of that
+    # type instead of the global min_strength. Signal types absent from the
+    # map fall back to min_strength. Empty dict / null = use min_strength
+    # globally (legacy behaviour).
+    signal_type_strength_overrides: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True
+    )
     # Optional comma-separated ticker whitelist. Empty = any ticker.
     tickers: Mapped[str | None] = mapped_column(String(2000))
 
