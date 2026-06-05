@@ -4,6 +4,7 @@ from app.models.conversation import ChatMessage, Conversation
 from app.models.halal_compliance import HalalCompliance
 from app.models.insider_trade import InsiderTrade
 from app.models.news import NewsItem
+from app.models.password_reset_token import PasswordResetToken
 from app.models.portfolio import Portfolio, Position, Trade
 from app.models.signal import Signal
 from app.models.signal_outcome import SignalOutcome
@@ -29,4 +30,5 @@ __all__ = [
     "Strategy",
     "StrategyTrade",
     "HalalCompliance",
+    "PasswordResetToken",
 ]

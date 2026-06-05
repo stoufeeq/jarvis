@@ -127,3 +127,51 @@ def alert_triggered_email(
 </html>
 """
     return subject, html
+
+
+def password_reset_email(code: str, reset_url: str, ttl_minutes: int) -> tuple[str, str]:
+    """Return (subject, html_body) for a password reset email.
+
+    The email shows the 6-digit code prominently (the page asks for the
+    code, not for clicking a tokenised link) and includes a link to the
+    reset page so the recipient can jump straight there.
+    """
+    subject = "Reset your Jarvis password"
+    html = f"""
+<!DOCTYPE html>
+<html>
+<body style="font-family:sans-serif;background:#0f172a;color:#f1f5f9;padding:32px;">
+  <div style="max-width:480px;margin:auto;background:#1e293b;border-radius:12px;
+              padding:28px;border:1px solid #334155;">
+    <h2 style="margin:0 0 4px;color:#f1f5f9;">Reset your password</h2>
+    <p style="color:#94a3b8;margin:0 0 24px;font-size:14px;">Jarvis Financial Intelligence</p>
+
+    <p style="font-size:15px;color:#cbd5e1;margin:0 0 16px;">
+      Use this 6-digit code to set a new password:
+    </p>
+
+    <div style="font-family:'Menlo','Monaco',monospace;font-size:36px;letter-spacing:0.5em;
+                background:#0f172a;border:1px solid #334155;border-radius:8px;
+                padding:18px 12px;text-align:center;font-weight:bold;color:#f59e0b;
+                margin:0 0 24px;">
+      {code}
+    </div>
+
+    <p style="font-size:14px;color:#cbd5e1;margin:0 0 8px;">
+      <a href="{reset_url}" style="color:#60a5fa;text-decoration:none;">
+        Open the reset page →
+      </a>
+    </p>
+    <p style="font-size:13px;color:#94a3b8;margin:0 0 24px;">
+      Or copy this URL: <span style="color:#94a3b8;">{reset_url}</span>
+    </p>
+
+    <p style="margin:0;font-size:13px;color:#64748b;">
+      The code expires in {ttl_minutes} minutes and can be used once.
+      If you didn't request this, ignore this email — your password stays the same.
+    </p>
+  </div>
+</body>
+</html>
+"""
+    return subject, html

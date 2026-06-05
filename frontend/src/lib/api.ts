@@ -70,6 +70,10 @@ export const authApi = {
     api.patch("/users/me", data),
   testEmail: () => api.post("/users/me/test-email"),
   testTelegram: () => api.post("/users/me/test-telegram"),
+  forgotPassword: (email: string) =>
+    api.post("/auth/forgot-password", { email }),
+  resetPassword: (email: string, code: string, new_password: string) =>
+    api.post("/auth/reset-password", { email, code, new_password }),
 };
 
 export const portfolioApi = {
