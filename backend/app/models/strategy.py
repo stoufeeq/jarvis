@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     Enum,
@@ -30,6 +31,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+# Use Postgres JSONB in production for indexed-path access, plain JSON in
+# tests (SQLite). variant() returns the right impl per dialect.
+_JSON_TYPE = JSON().with_variant(JSONB(), "postgresql")
 
 from app.database import Base
 from app.models.base import TimestampMixin
@@ -86,7 +91,7 @@ class Strategy(TimestampMixin, Base):
     # map fall back to min_strength. Empty dict / null = use min_strength
     # globally (legacy behaviour).
     signal_type_strength_overrides: Mapped[dict | None] = mapped_column(
-        JSONB, nullable=True
+        _JSON_TYPE, nullable=True
     )
     # Optional comma-separated ticker whitelist. Empty = any ticker.
     tickers: Mapped[str | None] = mapped_column(String(2000))
