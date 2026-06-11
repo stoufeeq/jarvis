@@ -52,6 +52,7 @@ class AIAdvisor:
         user_message: str,
         portfolio_context: dict | None = None,
         history: list[dict] | None = None,
+        market_snapshot: dict | None = None,
     ) -> str:
         """Generate a reply, replaying conversation history so multi-turn
         chats stay grounded in earlier turns.
@@ -63,17 +64,39 @@ class AIAdvisor:
                 Refreshed each call so a long chat stays current.
             history: prior turns as [{role: "user"|"assistant", content: str}, ...]
                 in chronological order. Should NOT include `user_message` itself.
+            market_snapshot: cached market data (indices, commodities, crypto,
+                forex, sectors, movers, headlines, macro). Injected as a full
+                preamble on the FIRST turn of a conversation, then condensed
+                to a one-line refresher on subsequent turns — Gemini already
+                has the full context from turn 1's user message in history.
         """
-        # Build the current turn's message — portfolio context (if any)
-        # rides along with this turn only; it isn't saved to the DB so the
-        # conversation history stays clean.
+        # Build the current turn's message — portfolio context (if any) and
+        # market snapshot (if any) ride along with this turn only; they
+        # aren't saved to the DB so the conversation history stays clean.
+        preamble_parts: list[str] = []
         if portfolio_context:
-            current_turn_text = (
+            preamble_parts.append(
                 "(Current portfolio snapshot — use this to ground your answer; "
                 "don't dwell on it unless asked.)\n"
-                f"{self._format_portfolio_context(portfolio_context)}\n\n"
-                f"{user_message}"
+                + self._format_portfolio_context(portfolio_context)
             )
+        if market_snapshot:
+            is_first_turn = not history
+            if is_first_turn:
+                preamble_parts.append(
+                    "(Current market snapshot — use this whenever the user asks "
+                    "about general markets, asset prices, sectors, or macro. Don't "
+                    "fall back to your training data for current prices.)\n"
+                    + self._format_market_snapshot_full(market_snapshot)
+                )
+            else:
+                preamble_parts.append(
+                    "(Market refresher; the full snapshot was in the first turn.)\n"
+                    + self._format_market_snapshot_refresher(market_snapshot)
+                )
+
+        if preamble_parts:
+            current_turn_text = "\n\n".join(preamble_parts) + "\n\n" + user_message
         else:
             current_turn_text = user_message
 
@@ -158,3 +181,120 @@ For each significant signal, provide:
                 f"Current: ${cp} | P&L: ${pnl:,.2f} ({pnl_pct:.2f}%)"
             )
         return "\n".join(lines)
+
+    # ── Market snapshot formatting ────────────────────────────────────────
+
+    @staticmethod
+    def _fmt_cell(name: str, cell: dict) -> str | None:
+        """Render one quote cell, e.g. 'Gold $2,450.30 (+0.5%)'."""
+        price = cell.get("price")
+        chg = cell.get("change_pct")
+        if price is None:
+            return None
+        sign = "+" if chg is not None and chg >= 0 else ""
+        chg_str = f" ({sign}{chg:.2f}%)" if chg is not None else ""
+        # Format price compactly: small values get more decimals.
+        if price >= 1000:
+            price_str = f"{price:,.2f}"
+        elif price >= 1:
+            price_str = f"{price:.2f}"
+        else:
+            price_str = f"{price:.4f}"
+        return f"{name} {price_str}{chg_str}"
+
+    def _format_market_snapshot_full(self, snap: dict) -> str:
+        """Full preamble — every section. Used on the first turn of a chat."""
+        from datetime import datetime as _dt
+
+        lines = []
+        captured = snap.get("_captured_at")
+        if captured:
+            try:
+                ts = _dt.fromisoformat(captured).strftime("%Y-%m-%d %H:%M UTC")
+                lines.append(f"**Market snapshot** (as of {ts}):")
+            except Exception:
+                lines.append("**Market snapshot**:")
+        else:
+            lines.append("**Market snapshot**:")
+
+        def section(label: str, mapping: dict) -> None:
+            cells = [self._fmt_cell(n, c) for n, c in mapping.items()]
+            cells = [c for c in cells if c]
+            if cells:
+                lines.append(f"{label}: " + ", ".join(cells))
+
+        section("INDICES",       snap.get("indices", {}))
+        section("ASSET CLASSES", snap.get("asset_classes", {}))
+        section("CRYPTO",        snap.get("crypto", {}))
+        section("FOREX",         snap.get("forex", {}))
+
+        sectors = snap.get("sectors") or []
+        sector_strs = [
+            f"{s['name']} {'+' if (s.get('change_pct') or 0) >= 0 else ''}"
+            f"{s.get('change_pct'):.2f}%"
+            for s in sectors if s.get("change_pct") is not None
+        ]
+        if sector_strs:
+            lines.append("SECTORS (S&P 500): " + ", ".join(sector_strs))
+
+        movers = snap.get("top_movers") or {}
+        gainers = movers.get("gainers") or []
+        losers = movers.get("losers") or []
+        if gainers or losers:
+            g_str = ", ".join(f"{m['ticker']} +{m['change_pct']:.1f}%" for m in gainers)
+            l_str = ", ".join(f"{m['ticker']} {m['change_pct']:.1f}%" for m in losers)
+            lines.append(f"TOP MOVERS: {g_str} | {l_str}")
+
+        headlines = snap.get("headlines") or []
+        if headlines:
+            lines.append("LATEST HEADLINES:")
+            for h in headlines:
+                lines.append(f"- {h.get('title', '')}")
+
+        upcoming = snap.get("upcoming_macro") or []
+        if upcoming:
+            lines.append("UPCOMING MACRO: " + "; ".join(
+                u.get("event", "") for u in upcoming
+            ))
+
+        return "\n".join(lines)
+
+    def _format_market_snapshot_refresher(self, snap: dict) -> str:
+        """One-line refresher used on turns after the first — Gemini already
+        saw the full snapshot in turn 1, this just nudges with latest top-line
+        prices in case the conversation drifted onto a different asset."""
+        from datetime import datetime as _dt
+
+        captured = snap.get("_captured_at")
+        ts = ""
+        if captured:
+            try:
+                ts = _dt.fromisoformat(captured).strftime("%H:%M UTC")
+            except Exception:
+                pass
+
+        highlights: list[str] = []
+        indices = snap.get("indices", {})
+        for name in ("S&P 500", "Nasdaq", "VIX"):
+            cell = indices.get(name)
+            if cell:
+                rendered = self._fmt_cell(name, cell)
+                if rendered:
+                    highlights.append(rendered)
+
+        for name in ("Gold", "Oil (WTI)", "10Y Treasury"):
+            cell = snap.get("asset_classes", {}).get(name)
+            if cell:
+                rendered = self._fmt_cell(name, cell)
+                if rendered:
+                    highlights.append(rendered)
+
+        for name in ("Bitcoin", "Ethereum"):
+            cell = snap.get("crypto", {}).get(name)
+            if cell:
+                rendered = self._fmt_cell(name, cell)
+                if rendered:
+                    highlights.append(rendered)
+
+        prefix = f"Refresher ({ts}): " if ts else "Refresher: "
+        return prefix + " | ".join(highlights) if highlights else prefix + "(no fresh data)"

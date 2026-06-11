@@ -19,6 +19,7 @@ celery_app = Celery(
         "app.workers.tasks.signal_outcome",
         "app.workers.tasks.calendar_refresh",
         "app.workers.tasks.auto_trader",
+        "app.workers.tasks.market_snapshot",
     ],
 )
 
@@ -94,5 +95,12 @@ celery_app.conf.beat_schedule = {
     "auto-trader-daily-exit-sweep": {
         "task": "app.workers.tasks.auto_trader.daily_exit_sweep",
         "schedule": crontab(hour=22, minute=15),  # 15min after signal outcome sweep
+    },
+    # Market snapshot for AI advisor grounding — every 4 hours at :15.
+    # Indices, commodities, crypto, forex, sectors, movers, headlines,
+    # macro events. Old rows pruned on each run (>7 days).
+    "refresh-market-snapshot": {
+        "task": "app.workers.tasks.market_snapshot.refresh_market_snapshot",
+        "schedule": crontab(hour="0,4,8,12,16,20", minute="15"),
     },
 }

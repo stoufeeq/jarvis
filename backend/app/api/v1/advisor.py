@@ -76,11 +76,18 @@ async def chat(
             portfolio_id=payload.portfolio_id,
         )
 
+    # Pull the latest market snapshot (lazy-refresh if stale or missing)
+    # so general questions about prices/macros land on current data
+    # instead of Gemini's training-cutoff knowledge.
+    from app.services.market_snapshot import MarketSnapshotService
+    market_snapshot = await MarketSnapshotService(db).get_latest_or_lazy()
+
     advisor = AIAdvisor()
     response = await advisor.chat(
         user_message=payload.message,
         portfolio_context=portfolio_context,
         history=history,
+        market_snapshot=market_snapshot,
     )
 
     # Persist both turns only after the model succeeds, so a Gemini failure
