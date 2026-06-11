@@ -249,13 +249,20 @@ class BriefingService:
 
     async def _build_context(self, user: User) -> dict:
         """Assemble all data needed for the Gemini prompt."""
-        from app.services.portfolio import PortfolioService
-
         # --- Portfolio ---
-        from app.models.portfolio import Portfolio
+        # Paper portfolios are excluded: they're auto-trader bookkeeping,
+        # not user-actionable holdings. Otherwise the briefing surfaces
+        # advice like "trim ORCL" for positions the strategy owns, which
+        # the user can't act on directly without disabling the strategy.
+        from app.models.portfolio import BrokerType, Portfolio
+        from app.services.portfolio import PortfolioService
         port_result = await self.db.execute(
             select(Portfolio)
-            .where(Portfolio.user_id == user.id, Portfolio.is_active == True)  # noqa: E712
+            .where(
+                Portfolio.user_id == user.id,
+                Portfolio.is_active == True,  # noqa: E712
+                Portfolio.broker != BrokerType.paper,
+            )
         )
         portfolios = list(port_result.scalars().all())
 

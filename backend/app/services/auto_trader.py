@@ -79,7 +79,18 @@ class AutoTraderService:
                 )
                 continue
 
+            # Dedupe by ticker — the consolidated verdict for (strategy,
+            # ticker) is the same whether 1 or 5 signals fired for that
+            # ticker this scan. Acting once prevents the same-scan close+
+            # reopen pattern observed on ORCL/NEE/NVDA where a sell and
+            # buy were created milliseconds apart from different signals
+            # of the same scan. Use the first-seen signal as the trigger
+            # (the verdict picks its own dominant signal internally).
+            seen_tickers: set[str] = set()
             for signal in signals:
+                if signal.ticker in seen_tickers:
+                    continue
+                seen_tickers.add(signal.ticker)
                 action = await self._handle_signal_for_strategy(strategy, portfolio, signal)
                 if action == "opened":
                     opened += 1
