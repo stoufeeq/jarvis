@@ -91,6 +91,22 @@ class TradeCashService:
             return
         currency = trade.currency.upper()
 
+        # Explicit account selection bypasses the fallback chain entirely.
+        if trade.account_id is not None:
+            account = await self.db.get(Account, trade.account_id)
+            if account is None or account.user_id != portfolio.user_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Funding account #{trade.account_id} not found or not yours",
+                )
+            if is_debit:
+                await self._debit_chosen_account(account, trade, amount, currency)
+            else:
+                await self._credit_chosen_account(account, trade, amount, currency)
+            return
+
+        # Fall back to the legacy USD → SGD → EUR priority chain when no
+        # account is specified (backward compatible with pre-feature trades).
         if is_debit:
             await self._debit(portfolio.user_id, trade, amount, currency)
         else:
@@ -246,6 +262,62 @@ class TradeCashService:
             amount=Decimal(str(deposit_amount)),
             currency=target_ccy,
             notes=_label(trade) + note_extra,
+            transacted_at=trade.traded_at or datetime.now(UTC),
+            trade_id=trade.id,
+        ))
+        await self.db.flush()
+
+    # ── Chosen-account path (no fallback, no FX) ──────────────────────────
+
+    async def _debit_chosen_account(
+        self, account: Account, trade: Trade, amount: float, trade_ccy: str
+    ) -> None:
+        """Drain `amount` (in trade_ccy) from the user-chosen account only.
+        Rejects with HTTP 400 if the account doesn't have enough in that
+        currency. No FX, no other-account fallback — the user picked this
+        account and chose to live with it.
+        """
+        # Eager-load balances to avoid lazy-load surprises.
+        await self.db.refresh(account, ["balances"])
+        bal_row = self._find_balance(account, trade_ccy)
+        available = float(bal_row.balance) if bal_row else 0.0
+
+        if available + 1e-6 < amount:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Insufficient {trade_ccy} in {account.name!r}: "
+                    f"need {round(amount, 2)} {trade_ccy}, "
+                    f"have {round(available, 2)} {trade_ccy}."
+                ),
+            )
+
+        take = min(amount, available)
+        await self._adjust_balance(account.id, trade_ccy, -take)
+        self.db.add(AccountTransaction(
+            account_id=account.id,
+            transaction_type=TransactionType.withdrawal,
+            amount=Decimal(str(round(take, 4))),
+            currency=trade_ccy,
+            notes=_label(trade),
+            transacted_at=trade.traded_at or datetime.now(UTC),
+            trade_id=trade.id,
+        ))
+        await self.db.flush()
+
+    async def _credit_chosen_account(
+        self, account: Account, trade: Trade, amount: float, trade_ccy: str
+    ) -> None:
+        """Deposit `amount` (in trade_ccy) into the user-chosen account.
+        Creates the currency balance row if the account doesn't already
+        hold that currency."""
+        await self._adjust_balance(account.id, trade_ccy, amount)
+        self.db.add(AccountTransaction(
+            account_id=account.id,
+            transaction_type=TransactionType.deposit,
+            amount=Decimal(str(round(amount, 4))),
+            currency=trade_ccy,
+            notes=_label(trade),
             transacted_at=trade.traded_at or datetime.now(UTC),
             trade_id=trade.id,
         ))

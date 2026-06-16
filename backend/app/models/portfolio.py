@@ -102,6 +102,14 @@ class Trade(TimestampMixin, Base):
     currency: Mapped[str] = mapped_column(String(10), nullable=False, server_default="USD")
     notes: Mapped[str | None] = mapped_column(Text)
     traded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Explicit funding account for the cash side. When set, TradeCashService
+    # debits/credits this account only — no fallback chain. NULL = legacy
+    # behaviour (drain USD → SGD → EUR oldest-first via the priority chain).
+    # SET NULL on account delete so trades survive an account being removed
+    # even though the historical cash link is broken.
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     # For IBKR synced trades
     external_id: Mapped[str | None] = mapped_column(String(100), unique=True)
 

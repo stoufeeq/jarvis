@@ -1,3 +1,4 @@
+from app.models.account import Account, AccountBalance, AccountTransaction
 from app.models.alert import Alert
 from app.models.calendar_event import CalendarEvent
 from app.models.conversation import ChatMessage, Conversation
@@ -33,4 +34,7 @@ __all__ = [
     "HalalCompliance",
     "PasswordResetToken",
     "MarketSnapshot",
+    "Account",
+    "AccountBalance",
+    "AccountTransaction",
 ]

@@ -88,6 +88,9 @@ class TradeCreate(BaseModel):
     currency: str = "USD"
     notes: str | None = None
     traded_at: datetime
+    # Optional explicit funding account. NULL = auto (drain USD → SGD → EUR
+    # oldest-first via the priority chain).
+    account_id: int | None = None
 
 
 class TradeUpdate(BaseModel):
@@ -99,6 +102,7 @@ class TradeUpdate(BaseModel):
     currency: str | None = None
     notes: str | None = None
     traded_at: datetime | None = None
+    account_id: int | None = None
 
 
 class TradeRead(BaseModel):
@@ -114,5 +118,6 @@ class TradeRead(BaseModel):
     notes: str | None
     traded_at: datetime
     external_id: str | None
+    account_id: int | None = None
 
     model_config = {"from_attributes": True}

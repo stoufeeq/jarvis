@@ -7,6 +7,7 @@ to keep them fast and isolated. Tests that need real market data are marked
 
 import asyncio
 import os
+
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -19,6 +20,10 @@ os.environ["CELERY_BROKER_URL"] = "memory://"
 os.environ["CELERY_RESULT_BACKEND"] = "cache+memory://"
 os.environ["GEMINI_API_KEY"] = ""
 
+# Import the models package so every model registers with Base.metadata
+# — otherwise FKs to tables a given test doesn't directly import (e.g.
+# the new trades.account_id → accounts.id) fail with NoReferencedTable.
+from app import models  # noqa: E402, F401
 from app.database import Base  # noqa: E402
 
 

@@ -48,6 +48,9 @@ export interface Trade {
   notes: string | null;
   traded_at: string;
   external_id: string | null;
+  // Explicit funding account; null when the trade was created on the
+  // legacy USD → SGD → EUR fallback chain.
+  account_id: number | null;
 }
 
 export interface Signal {

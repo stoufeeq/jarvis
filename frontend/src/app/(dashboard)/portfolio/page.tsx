@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { portfolioApi, marketApi } from "@/lib/api";
+import { portfolioApi, marketApi, accountsApi } from "@/lib/api";
 import { formatCurrency, formatPct, pnlColor, currencyLabel } from "@/lib/utils";
 import { useCurrencyDisplay } from "@/hooks/useCurrencyDisplay";
 import { CurrencySwitcher } from "@/components/ui/CurrencySwitcher";
@@ -32,6 +32,8 @@ const EMPTY_TRADE = {
   currency: "USD",
   traded_at: new Date().toISOString().slice(0, 16),
   notes: "",
+  // "" = auto (USD → SGD → EUR fallback chain); numeric string = explicit account id.
+  account_id: "" as string,
 };
 
 type SortKey = "ticker" | "quantity" | "avg_cost" | "current_price" | "unrealized_pnl" | "unrealized_pnl_pct" | "day_change_pct";
@@ -325,7 +327,7 @@ export default function PortfolioPage() {
   });
 
   function buildTradePayload(form: typeof EMPTY_TRADE) {
-    return {
+    const payload: Record<string, unknown> = {
       ticker: form.ticker.trim().toUpperCase(),
       action: form.action,
       asset_type: form.asset_type,
@@ -336,6 +338,12 @@ export default function PortfolioPage() {
       traded_at: new Date(form.traded_at).toISOString(),
       notes: form.notes || null,
     };
+    // Only include account_id when the user picked a specific one; blank
+    // means "use the fallback chain", which the backend treats as null.
+    if (form.account_id) {
+      payload.account_id = parseInt(form.account_id, 10);
+    }
+    return payload;
   }
 
   function handleSubmitTrade() {
@@ -358,6 +366,7 @@ export default function PortfolioPage() {
       currency: trade.currency ?? "USD",
       traded_at: trade.traded_at.slice(0, 16),
       notes: trade.notes ?? "",
+      account_id: trade.account_id != null ? String(trade.account_id) : "",
     });
   }
 
@@ -1010,6 +1019,16 @@ function TradeForm({
   title: string;
   hideTicker?: boolean;
 }) {
+  // Cash accounts for the Funding-account dropdown. Cached for 5 min — the
+  // list rarely changes mid-session, and balances aren't worth re-polling
+  // every keystroke. The displayed balance per account is informational
+  // only; the backend re-checks at submit time.
+  const { data: accounts = [] } = useQuery<import("@/types").Account[]>({
+    queryKey: ["accounts"],
+    queryFn: () => accountsApi.list().then((r) => r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+
   async function detectCurrency(ticker: string) {
     const t = ticker.trim().toUpperCase();
     if (!t) return;
@@ -1017,6 +1036,18 @@ function TradeForm({
       const res = await marketApi.currency(t);
       setForm((f) => ({ ...f, currency: res.data.currency }));
     } catch { /* ignore */ }
+  }
+
+  // Format the current balance of the trade's currency on each account
+  // for the dropdown label. Falls back to "no balance in CCY" if the
+  // account doesn't hold the trade currency yet.
+  function accountLabel(acct: import("@/types").Account): string {
+    const ccy = form.currency || "USD";
+    const bal = acct.balances?.find((b) => b.currency === ccy);
+    if (bal) {
+      return `${acct.name} — ${formatCurrency(bal.balance, ccy)} ${ccy}`;
+    }
+    return `${acct.name} — no ${ccy} balance`;
   }
 
   return (
@@ -1099,6 +1130,27 @@ function TradeForm({
             maxLength={10}
             className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           />
+        </div>
+        <div className="space-y-1 sm:col-span-2">
+          <label className="text-xs text-muted-foreground">Funding account</label>
+          <select
+            value={form.account_id}
+            onChange={(e) => setForm((f) => ({ ...f, account_id: e.target.value }))}
+            className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Auto (USD → SGD → EUR fallback chain)</option>
+            {accounts.map((acct) => (
+              <option key={acct.id} value={String(acct.id)}>
+                {accountLabel(acct)}
+              </option>
+            ))}
+          </select>
+          {form.account_id && (
+            <p className="text-[11px] text-muted-foreground">
+              Buys debit this account in {form.currency || "USD"}; rejected if insufficient.
+              Sells credit proceeds back to the same account.
+            </p>
+          )}
         </div>
         <div className="space-y-1">
           <label className="text-xs text-muted-foreground">Date &amp; Time *</label>
