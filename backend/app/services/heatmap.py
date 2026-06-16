@@ -10,25 +10,13 @@ Results are cached in-process for CACHE_TTL seconds.
 """
 
 import asyncio
-import logging
 import math
 import time
 from typing import Any
 
 from app.data.sp500 import SP500
 
-log = logging.getLogger(__name__)
-
 CACHE_TTL = 1800  # 30 minutes — aligned with frontend staleTime and Celery pre-warm interval
-
-# Defensive clamp on yfinance daily-bar data. Yahoo occasionally publishes
-# bad prints (a 2026-06-16 example showed WDC at +20%+ which wasn't real),
-# and a single rogue value distorts the whole sector visualisation. Real
-# single-day moves >15% happen but are rare; on the S&P 500 universe,
-# anything bigger is almost always a yfinance quote glitch or a missed
-# corporate-action adjustment. Mark those as None so the heatmap renders
-# the cell as "no data" rather than amplifying the noise.
-MAX_SANE_DAILY_CHANGE_PCT = 15.0
 
 _cache: dict[str, Any] = {}
 
@@ -79,17 +67,7 @@ def _fetch_heatmap_sync() -> dict:
                     prev = float(series.iloc[-2])
                     curr = float(series.iloc[-1])
                     if prev and math.isfinite(prev) and math.isfinite(curr):
-                        pct = round((curr - prev) / prev * 100, 2)
-                        if abs(pct) > MAX_SANE_DAILY_CHANGE_PCT:
-                            log.warning(
-                                "Heatmap: dropping implausible change for %s "
-                                "(prev=%.2f, curr=%.2f, pct=%+.2f%%) — likely a "
-                                "yfinance bad print or missed corporate action.",
-                                ticker, prev, curr, pct,
-                            )
-                            change_map[ticker] = None
-                        else:
-                            change_map[ticker] = pct
+                        change_map[ticker] = round((curr - prev) / prev * 100, 2)
                     else:
                         change_map[ticker] = None
                 elif len(series) == 1:
