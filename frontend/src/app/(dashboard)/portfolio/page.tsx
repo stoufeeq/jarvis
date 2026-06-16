@@ -186,6 +186,37 @@ export default function PortfolioPage() {
   // State for paper portfolio creation (only used when in paper mode and none exists)
   const [paperInitialCash, setPaperInitialCash] = useState("100000");
 
+  // Edit-cash modal for the paper portfolio (initial_cash + cash_balance).
+  // Pure number edits — does NOT clean up positions/trades/strategy_trades.
+  // Useful when you want to top up virtual cash or move the starting anchor
+  // for P&L calculation. For a real reset, build a separate /reset endpoint.
+  const [showEditCash, setShowEditCash] = useState(false);
+  const [editInitialCash, setEditInitialCash] = useState("");
+  const [editCashBalance, setEditCashBalance] = useState("");
+
+  const updateCashMutation = useMutation({
+    mutationFn: () => {
+      const payload: { initial_cash?: number; cash_balance?: number } = {};
+      const ic = parseFloat(editInitialCash);
+      const cb = parseFloat(editCashBalance);
+      if (!Number.isNaN(ic) && ic >= 0) payload.initial_cash = ic;
+      if (!Number.isNaN(cb) && cb >= 0) payload.cash_balance = cb;
+      return portfolioApi.update(selectedId!, payload);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["portfolios"] });
+      setShowEditCash(false);
+      toast.success("Virtual cash updated");
+    },
+    onError: () => toast.error("Failed to update virtual cash"),
+  });
+
+  function openEditCash() {
+    setEditInitialCash(String(summary?.initial_cash ?? ""));
+    setEditCashBalance(String(summary?.cash_balance ?? ""));
+    setShowEditCash(true);
+  }
+
   const createPaperMutation = useMutation({
     mutationFn: () => portfolioApi.create({
       name: "Paper Trading",
@@ -436,6 +467,65 @@ export default function PortfolioPage() {
         </div>
       )}
 
+      {/* Edit Virtual Cash modal (paper portfolio only) */}
+      {showEditCash && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-card border border-border rounded-xl p-6 w-full max-w-sm mx-4 space-y-4">
+            <div>
+              <h2 className="text-sm font-semibold">Edit Virtual Cash</h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                Adjust the starting anchor and/or the current balance. Existing
+                positions and trades are <strong>not</strong> touched — for a
+                clean wipe, you&apos;d want a full reset (not built yet).
+              </p>
+            </div>
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">Initial cash (anchor for P&L)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={editInitialCash}
+                  onChange={(e) => setEditInitialCash(e.target.value)}
+                  className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">Current cash balance</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={editCashBalance}
+                  onChange={(e) => setEditCashBalance(e.target.value)}
+                  className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Setting this to a number different from the implied (initial − cost of
+                  positions held) will make P&L look inconsistent until trades catch up.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={() => updateCashMutation.mutate()}
+                disabled={updateCashMutation.isPending}
+                className="flex-1 px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 disabled:opacity-50"
+              >
+                {updateCashMutation.isPending ? "Saving…" : "Save"}
+              </button>
+              <button
+                onClick={() => setShowEditCash(false)}
+                className="px-4 py-2 rounded-md bg-secondary text-sm hover:bg-secondary/80"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Edit portfolio modal */}
       {editingPortfolio && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -658,7 +748,16 @@ export default function PortfolioPage() {
           {isPaper && summary && (
             <div className={`grid grid-cols-1 gap-4 ${summary.is_auto_managed ? "" : "md:grid-cols-3"}`}>
               <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
-                <p className="text-xs text-amber-500 uppercase tracking-wider font-medium">Virtual Cash</p>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-xs text-amber-500 uppercase tracking-wider font-medium">Virtual Cash</p>
+                  <button
+                    onClick={openEditCash}
+                    className="text-[10px] text-amber-500/70 hover:text-amber-500 underline-offset-2 hover:underline"
+                    title="Edit initial cash and current balance (numbers only — no trade/position cleanup)"
+                  >
+                    Edit
+                  </button>
+                </div>
                 <p className="text-2xl font-bold mt-1">
                   {mv(formatCurrency(summary.cash_balance ?? 0, "USD"))}
                 </p>
