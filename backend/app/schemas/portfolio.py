@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.portfolio import AssetType, BrokerType, TradeAction
 
@@ -19,6 +19,11 @@ class PortfolioUpdate(BaseModel):
     description: str | None = None
     currency: str | None = None
     is_active: bool | None = None
+    # Paper-portfolio editable knobs. Backend setattr loop applies them
+    # without guard — the frontend only exposes the UI for paper
+    # portfolios. Negative values are rejected.
+    initial_cash: float | None = Field(default=None, ge=0)
+    cash_balance: float | None = Field(default=None, ge=0)
 
 
 class PortfolioRead(BaseModel):
