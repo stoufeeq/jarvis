@@ -3,20 +3,37 @@ Heatmap service — batch-fetches S&P 500 quotes and builds a sector tree
 suitable for rendering as a Recharts Treemap (heatmap) or ScatterChart
 (bubbles) on the frontend.
 
-Uses period="1mo" so we have enough rows to compute a 20-day average volume
-for the relative-volume axis on the bubbles view.
+Two data sources, used independently:
+- yf.download(period="1mo", interval="1d") — used ONLY for the 20-day
+  volume series (for the relative-volume bubble-chart axis).
+- yfinance Ticker.fast_info — used for change_pct via (lastPrice -
+  previousClose) / previousClose. The historical-bar feed occasionally
+  drops valid trading days (a 2026-06-15 example caused WDC to show
+  Friday-to-Tuesday move instead of Monday-to-Tuesday), but fast_info's
+  previousClose is reliable.
 
-Results are cached in-process for CACHE_TTL seconds.
+fast_info is per-ticker (no batch endpoint), so we parallelise with a
+ThreadPoolExecutor. Combined with the volume fetch, a cold heatmap takes
+~10-15s; warm hits return from the 30-min in-process cache instantly.
 """
 
 import asyncio
+import logging
 import math
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from app.data.sp500 import SP500
 
+log = logging.getLogger(__name__)
+
 CACHE_TTL = 1800  # 30 minutes — aligned with frontend staleTime and Celery pre-warm interval
+
+# fast_info per-ticker is sequential by default. yfinance's underlying
+# requests session is thread-safe enough for ~10 concurrent calls without
+# rate-limit issues in practice.
+FAST_INFO_WORKERS = 10
 
 _cache: dict[str, Any] = {}
 
@@ -35,6 +52,34 @@ class HeatmapService:
         return data
 
 
+def _change_pct_via_fast_info(ticker: str) -> float | None:
+    """Return today's change_pct using yfinance fast_info, or None on error.
+
+    fast_info exposes previousClose (yesterday's settled close, even when
+    the historical-bar download() is missing that day) and lastPrice
+    (current intraday quote). Both are needed for an accurate same-day
+    change calculation.
+    """
+    import yfinance as yf
+
+    try:
+        fi = yf.Ticker(ticker).fast_info
+        # fast_info is dict-like; keys can vary across yfinance versions.
+        prev = fi.get("previousClose") or fi.get("regularMarketPreviousClose")
+        last = fi.get("lastPrice") or fi.get("regularMarketPrice") or fi.get("last_price")
+        if prev is None or last is None:
+            return None
+        prev_f = float(prev)
+        last_f = float(last)
+        if prev_f <= 0 or not math.isfinite(prev_f) or not math.isfinite(last_f):
+            return None
+        return round((last_f - prev_f) / prev_f * 100, 2)
+    except Exception:
+        # yfinance throws all kinds of things (HTTP errors, JSON decode,
+        # delisted tickers). Caller falls back to download-derived value.
+        return None
+
+
 def _fetch_heatmap_sync() -> dict:
     import yfinance as yf
 
@@ -42,7 +87,12 @@ def _fetch_heatmap_sync() -> dict:
 
     change_map: dict[str, float | None] = {}
     vol_map: dict[str, float | None] = {}
+    download_change_fallback: dict[str, float | None] = {}
 
+    # ── Volume series (download) ──────────────────────────────────────────
+    # 1mo of daily bars for the 20-day volume average. Also kept as a
+    # fallback source of change_pct in case fast_info fails for a ticker.
+    download_error: str | None = None
     try:
         df = yf.download(
             tickers,
@@ -60,24 +110,24 @@ def _fetch_heatmap_sync() -> dict:
             raise ValueError("No Close column in download result")
 
         for ticker in tickers:
-            # ── change % ──────────────────────────────────────────────────────
+            # ── change % fallback ─────────────────────────────────────────
             try:
                 series = (closes if len(tickers) == 1 else closes[ticker]).dropna()
                 if len(series) >= 2:
                     prev = float(series.iloc[-2])
                     curr = float(series.iloc[-1])
                     if prev and math.isfinite(prev) and math.isfinite(curr):
-                        change_map[ticker] = round((curr - prev) / prev * 100, 2)
+                        download_change_fallback[ticker] = round((curr - prev) / prev * 100, 2)
                     else:
-                        change_map[ticker] = None
+                        download_change_fallback[ticker] = None
                 elif len(series) == 1:
-                    change_map[ticker] = 0.0
+                    download_change_fallback[ticker] = 0.0
                 else:
-                    change_map[ticker] = None
+                    download_change_fallback[ticker] = None
             except (KeyError, IndexError, TypeError, ValueError):
-                change_map[ticker] = None
+                download_change_fallback[ticker] = None
 
-            # ── relative volume ───────────────────────────────────────────────
+            # ── relative volume ───────────────────────────────────────────
             try:
                 if volumes is None:
                     vol_map[ticker] = None
@@ -96,16 +146,39 @@ def _fetch_heatmap_sync() -> dict:
                 vol_map[ticker] = None
 
     except Exception as exc:
-        return {
-            "sectors": _build_sectors(change_map, vol_map),
-            "cached_at": time.time(),
-            "error": str(exc),
-        }
+        log.warning("Heatmap volume/fallback download failed: %s", exc)
+        download_error = str(exc)
 
-    return {
+    # ── change_pct via fast_info (parallel) ───────────────────────────────
+    # Per-ticker call but threadpool keeps it ~10s total. fast_info has
+    # previousClose / lastPrice that the historical-bar feed sometimes
+    # misses (e.g. 2026-06-15 was missing from download but present here).
+    fast_results: dict[str, float | None] = {}
+    with ThreadPoolExecutor(max_workers=FAST_INFO_WORKERS) as exe:
+        fast_results = dict(zip(tickers, exe.map(_change_pct_via_fast_info, tickers)))
+
+    # Prefer fast_info; fall back to download-derived value when missing.
+    fast_info_hits = 0
+    for ticker in tickers:
+        from_fast = fast_results.get(ticker)
+        if from_fast is not None:
+            change_map[ticker] = from_fast
+            fast_info_hits += 1
+        else:
+            change_map[ticker] = download_change_fallback.get(ticker)
+
+    log.info(
+        "Heatmap fetched: %d/%d via fast_info, rest from download fallback",
+        fast_info_hits, len(tickers),
+    )
+
+    payload: dict[str, Any] = {
         "sectors": _build_sectors(change_map, vol_map),
         "cached_at": time.time(),
     }
+    if download_error:
+        payload["error"] = download_error
+    return payload
 
 
 def _build_sectors(
