@@ -76,10 +76,17 @@ async def get_fx_rate(
 
 
 @router.get("/heatmap")
-async def get_heatmap(_: User = Depends(get_current_user)):
-    """S&P 500 sector heatmap — batch quotes cached 2 min. Trigger manually; no background polling."""
+async def get_heatmap(
+    force_refresh: bool = Query(
+        False,
+        description="Bypass the in-process cache and refetch from yfinance. "
+                    "Useful when a bad print is stuck in the cache.",
+    ),
+    _: User = Depends(get_current_user),
+):
+    """S&P 500 sector heatmap — batch quotes cached 30 min."""
     from app.services.heatmap import HeatmapService
-    return await HeatmapService().get_sp500_heatmap()
+    return await HeatmapService().get_sp500_heatmap(force_refresh=force_refresh)
 
 
 @router.get("/earnings")
