@@ -194,7 +194,15 @@ function AccountCard({
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="font-semibold truncate">{account.name}</p>
+          <div className="flex items-center gap-2">
+            <p className="font-semibold truncate">{account.name}</p>
+            <span
+              className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500/90 shrink-0"
+              title={`Sell-trade proceeds credited here are FX-converted to ${account.primary_currency ?? "USD"}`}
+            >
+              {account.primary_currency ?? "USD"}
+            </span>
+          </div>
           {account.description && (
             <p className="text-xs text-muted-foreground truncate">{account.description}</p>
           )}
@@ -309,6 +317,7 @@ function TransactionRow({
 function NewAccountModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
+  const [primaryCurrency, setPrimaryCurrency] = useState("USD");
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -316,7 +325,11 @@ function NewAccountModal({ onClose, onCreated }: { onClose: () => void; onCreate
     if (!name.trim()) return;
     setLoading(true);
     try {
-      await accountsApi.create({ name: name.trim(), description: desc.trim() || undefined });
+      await accountsApi.create({
+        name: name.trim(),
+        description: desc.trim() || undefined,
+        primary_currency: primaryCurrency,
+      });
       onCreated();
     } catch {
       toast.error("Failed to create account");
@@ -346,6 +359,19 @@ function NewAccountModal({ onClose, onCreated }: { onClose: () => void; onCreate
             placeholder="e.g. Interactive Brokers USD account"
             className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           />
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-1">Primary currency</label>
+          <select
+            value={primaryCurrency}
+            onChange={(e) => setPrimaryCurrency(e.target.value)}
+            className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <p className="text-[11px] text-muted-foreground mt-1">
+            Sell-trade proceeds credited to this account are FX-converted to this currency.
+          </p>
         </div>
         <div className="flex gap-2 justify-end pt-2">
           <button type="button" onClick={onClose} className="px-4 py-2 rounded-md bg-secondary text-sm">Cancel</button>

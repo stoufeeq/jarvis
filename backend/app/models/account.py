@@ -21,6 +21,13 @@ class Account(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(default=True)
+    # The currency this account "thinks in". Sell-proceeds credited via
+    # the chosen-account trade-cash path land here (FX-converted from the
+    # trade currency when they differ). e.g. StashAway accounts hold SGD
+    # → set primary_currency=SGD so US-stock sells auto-convert back.
+    primary_currency: Mapped[str] = mapped_column(
+        String(10), nullable=False, server_default="USD",
+    )
 
     balances: Mapped[list["AccountBalance"]] = relationship(
         back_populates="account", cascade="all, delete-orphan"

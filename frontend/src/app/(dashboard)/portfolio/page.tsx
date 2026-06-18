@@ -1038,16 +1038,19 @@ function TradeForm({
     } catch { /* ignore */ }
   }
 
-  // Format the current balance of the trade's currency on each account
-  // for the dropdown label. Falls back to "no balance in CCY" if the
-  // account doesn't hold the trade currency yet.
+  // Format each account's dropdown label. Shows the trade-currency
+  // balance if present, otherwise notes that FX-within-account will be
+  // used to cover the trade. The "→ CCY" suffix tells you which currency
+  // sell proceeds will be credited as.
   function accountLabel(acct: import("@/types").Account): string {
     const ccy = form.currency || "USD";
     const bal = acct.balances?.find((b) => b.currency === ccy);
+    const primary = acct.primary_currency ?? "USD";
+    const proceedsSuffix = primary !== ccy ? ` · sells → ${primary}` : "";
     if (bal) {
-      return `${acct.name} — ${formatCurrency(bal.balance, ccy)} ${ccy}`;
+      return `${acct.name} — ${formatCurrency(bal.balance, ccy)} ${ccy}${proceedsSuffix}`;
     }
-    return `${acct.name} — no ${ccy} balance`;
+    return `${acct.name} — no ${ccy} balance (will FX)${proceedsSuffix}`;
   }
 
   return (
@@ -1147,8 +1150,9 @@ function TradeForm({
           </select>
           {form.account_id && (
             <p className="text-[11px] text-muted-foreground">
-              Buys debit this account in {form.currency || "USD"}; rejected if insufficient.
-              Sells credit proceeds back to the same account.
+              Buys debit {form.currency || "USD"} from this account first; if short,
+              FX from its other currencies. Rejected only if the whole account can&apos;t cover.
+              Sells credit proceeds, FX-converted to the account&apos;s primary currency.
             </p>
           )}
         </div>

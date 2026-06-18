@@ -203,6 +203,9 @@ export interface Account {
   description: string | null;
   is_active: boolean;
   created_at: string;
+  // The currency the account "thinks in" — sell proceeds credited here
+  // via trade-cash wiring get FX-converted to this currency.
+  primary_currency: string;
   balances: AccountBalance[];
 }
 

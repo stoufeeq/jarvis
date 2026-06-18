@@ -8,12 +8,24 @@ from app.models.account import TransactionType
 class AccountCreate(BaseModel):
     name: str
     description: str | None = None
+    primary_currency: str = "USD"
+
+    @field_validator("primary_currency")
+    @classmethod
+    def primary_currency_upper(cls, v: str) -> str:
+        return v.upper()
 
 
 class AccountUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     is_active: bool | None = None
+    primary_currency: str | None = None
+
+    @field_validator("primary_currency")
+    @classmethod
+    def primary_currency_upper(cls, v: str | None) -> str | None:
+        return v.upper() if v else v
 
 
 class AccountBalanceRead(BaseModel):
@@ -89,6 +101,7 @@ class AccountRead(BaseModel):
     description: str | None
     is_active: bool
     created_at: datetime
+    primary_currency: str = "USD"
     balances: list[AccountBalanceRead] = []
 
     model_config = {"from_attributes": True}

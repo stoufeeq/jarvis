@@ -166,7 +166,8 @@ export const alertsApi = {
 export const accountsApi = {
   list: () => api.get("/accounts/"),
   get: (id: number) => api.get(`/accounts/${id}`),
-  create: (data: { name: string; description?: string }) => api.post("/accounts/", data),
+  create: (data: { name: string; description?: string; primary_currency?: string }) =>
+    api.post("/accounts/", data),
   update: (id: number, data: object) => api.patch(`/accounts/${id}`, data),
   delete: (id: number) => api.delete(`/accounts/${id}`),
   deposit: (id: number, data: { amount: number; currency: string; notes?: string; transacted_at?: string }) =>

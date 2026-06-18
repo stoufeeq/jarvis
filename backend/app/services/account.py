@@ -58,6 +58,7 @@ class AccountService:
             user_id=user_id,
             name=payload.name,
             description=payload.description,
+            primary_currency=payload.primary_currency,
         )
         self.db.add(account)
         await self.db.flush()

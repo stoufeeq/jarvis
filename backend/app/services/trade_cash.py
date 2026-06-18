@@ -267,57 +267,129 @@ class TradeCashService:
         ))
         await self.db.flush()
 
-    # ── Chosen-account path (no fallback, no FX) ──────────────────────────
+    # ── Chosen-account path (no cross-account chain; FX within account) ───
 
     async def _debit_chosen_account(
         self, account: Account, trade: Trade, amount: float, trade_ccy: str
     ) -> None:
-        """Drain `amount` (in trade_ccy) from the user-chosen account only.
-        Rejects with HTTP 400 if the account doesn't have enough in that
-        currency. No FX, no other-account fallback — the user picked this
-        account and chose to live with it.
-        """
-        # Eager-load balances to avoid lazy-load surprises.
-        await self.db.refresh(account, ["balances"])
-        bal_row = self._find_balance(account, trade_ccy)
-        available = float(bal_row.balance) if bal_row else 0.0
+        """Drain `amount` (in trade_ccy) from the user-chosen account.
 
-        if available + 1e-6 < amount:
+        Tries the trade currency first; if short, FX-converts from the
+        other currencies the SAME account holds, largest balance first.
+        Rejects with HTTP 400 only if the account can't cover the trade
+        even after exhausting every currency it holds. No cross-account
+        fallback — the user picked this account.
+        """
+        await self.db.refresh(account, ["balances"])
+
+        # Step 1: drain trade currency directly (no FX, 1.0 rate).
+        remaining = amount
+        bal_row = self._find_balance(account, trade_ccy)
+        if bal_row and float(bal_row.balance) > 0:
+            take = min(remaining, float(bal_row.balance))
+            await self._adjust_balance(account.id, trade_ccy, -take)
+            self.db.add(AccountTransaction(
+                account_id=account.id,
+                transaction_type=TransactionType.withdrawal,
+                amount=Decimal(str(round(take, 4))),
+                currency=trade_ccy,
+                notes=_label(trade),
+                transacted_at=trade.traded_at or datetime.now(UTC),
+                trade_id=trade.id,
+            ))
+            remaining -= take
+
+        if remaining <= 1e-6:
+            await self.db.flush()
+            return
+
+        # Step 2: cover the shortfall via FX from the other currencies in
+        # this same account, largest balance first.
+        other_balances = sorted(
+            (b for b in account.balances if b.currency != trade_ccy and float(b.balance) > 0),
+            key=lambda b: float(b.balance),
+            reverse=True,
+        )
+        if other_balances:
+            needed_rates = {b.currency for b in other_balances}
+            rates = await self._fx_rates_to(trade_ccy, list(needed_rates))
+
+            for b in other_balances:
+                if remaining <= 1e-6:
+                    break
+                rate = rates.get(b.currency)
+                if rate is None or not math.isfinite(rate) or rate <= 0:
+                    continue
+                avail_native = float(b.balance)
+                avail_in_trade = avail_native * rate
+                if avail_in_trade >= remaining:
+                    take_native = round(remaining / rate, 4)
+                    take_trade = remaining
+                else:
+                    take_native = avail_native
+                    take_trade = avail_in_trade
+
+                await self._adjust_balance(account.id, b.currency, -take_native)
+                self.db.add(AccountTransaction(
+                    account_id=account.id,
+                    transaction_type=TransactionType.withdrawal,
+                    amount=Decimal(str(take_native)),
+                    currency=b.currency,
+                    notes=_label(trade) + (
+                        f" (FX: {take_native} {b.currency} ≈ {round(take_trade, 4)} {trade_ccy})"
+                    ),
+                    transacted_at=trade.traded_at or datetime.now(UTC),
+                    trade_id=trade.id,
+                ))
+                remaining -= take_trade
+
+        if remaining > 1e-2:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Insufficient {trade_ccy} in {account.name!r}: "
-                    f"need {round(amount, 2)} {trade_ccy}, "
-                    f"have {round(available, 2)} {trade_ccy}."
+                    f"Insufficient funds in {account.name!r}: "
+                    f"need {round(amount, 2)} {trade_ccy}; still short "
+                    f"{round(remaining, 2)} {trade_ccy} after draining "
+                    f"every currency in this account (FX applied)."
                 ),
             )
 
-        take = min(amount, available)
-        await self._adjust_balance(account.id, trade_ccy, -take)
-        self.db.add(AccountTransaction(
-            account_id=account.id,
-            transaction_type=TransactionType.withdrawal,
-            amount=Decimal(str(round(take, 4))),
-            currency=trade_ccy,
-            notes=_label(trade),
-            transacted_at=trade.traded_at or datetime.now(UTC),
-            trade_id=trade.id,
-        ))
         await self.db.flush()
 
     async def _credit_chosen_account(
         self, account: Account, trade: Trade, amount: float, trade_ccy: str
     ) -> None:
-        """Deposit `amount` (in trade_ccy) into the user-chosen account.
-        Creates the currency balance row if the account doesn't already
-        hold that currency."""
-        await self._adjust_balance(account.id, trade_ccy, amount)
+        """Deposit sell proceeds into the chosen account's primary currency.
+
+        If primary_currency == trade_ccy: straight deposit.
+        Else: FX-convert trade_ccy → primary_currency and deposit there.
+        Rejects with HTTP 400 if FX rate isn't available.
+        """
+        primary = (account.primary_currency or "USD").upper()
+        if primary == trade_ccy:
+            deposit_amount = amount
+            note_extra = ""
+        else:
+            rates = await self._fx_rates_to(primary, [trade_ccy])
+            rate = rates.get(trade_ccy)
+            if rate is None or not math.isfinite(rate) or rate <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Cannot credit proceeds: no FX rate available "
+                        f"for {trade_ccy} → {primary}."
+                    ),
+                )
+            deposit_amount = round(amount * rate, 4)
+            note_extra = f" (FX: {round(amount, 4)} {trade_ccy} ≈ {deposit_amount} {primary})"
+
+        await self._adjust_balance(account.id, primary, deposit_amount)
         self.db.add(AccountTransaction(
             account_id=account.id,
             transaction_type=TransactionType.deposit,
-            amount=Decimal(str(round(amount, 4))),
-            currency=trade_ccy,
-            notes=_label(trade),
+            amount=Decimal(str(round(deposit_amount, 4))),
+            currency=primary,
+            notes=_label(trade) + note_extra,
             transacted_at=trade.traded_at or datetime.now(UTC),
             trade_id=trade.id,
         ))
