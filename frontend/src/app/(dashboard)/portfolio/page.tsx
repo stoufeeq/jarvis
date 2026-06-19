@@ -327,7 +327,11 @@ export default function PortfolioPage() {
   });
 
   function buildTradePayload(form: typeof EMPTY_TRADE) {
-    const payload: Record<string, unknown> = {
+    // Always include account_id (null = Auto / fallback chain, number =
+    // specific account). Sending null explicitly so Edit Trade can flip
+    // a previously-chosen account back to Auto — exclude_unset on the
+    // backend honours the null.
+    return {
       ticker: form.ticker.trim().toUpperCase(),
       action: form.action,
       asset_type: form.asset_type,
@@ -337,13 +341,8 @@ export default function PortfolioPage() {
       currency: form.currency || "USD",
       traded_at: new Date(form.traded_at).toISOString(),
       notes: form.notes || null,
+      account_id: form.account_id ? parseInt(form.account_id, 10) : null,
     };
-    // Only include account_id when the user picked a specific one; blank
-    // means "use the fallback chain", which the backend treats as null.
-    if (form.account_id) {
-      payload.account_id = parseInt(form.account_id, 10);
-    }
-    return payload;
   }
 
   function handleSubmitTrade() {
@@ -372,18 +371,13 @@ export default function PortfolioPage() {
 
   function handleSubmitEdit() {
     if (!editingTrade) return;
+    // Reuse buildTradePayload so the edit path picks up every field the
+    // create path supports (notably account_id — the inline payload that
+    // used to live here silently dropped it, so picking a Funding account
+    // never stuck on existing trades).
     updateTradeMutation.mutate({
       id: editingTrade.id,
-      data: {
-        action: editForm.action,
-        asset_type: editForm.asset_type,
-        quantity: parseFloat(editForm.quantity),
-        price: parseFloat(editForm.price),
-        fees: editForm.fees ? parseFloat(editForm.fees) : 0,
-        currency: editForm.currency || "USD",
-        traded_at: new Date(editForm.traded_at).toISOString(),
-        notes: editForm.notes || null,
-      },
+      data: buildTradePayload(editForm),
     });
   }
 

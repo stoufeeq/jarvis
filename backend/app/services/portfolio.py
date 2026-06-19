@@ -244,7 +244,11 @@ class PortfolioService:
     async def update_trade(self, trade: Trade, payload: TradeUpdate) -> Trade:
         from app.services.trade_cash import TradeCashService
 
-        for field, value in payload.model_dump(exclude_none=True).items():
+        # exclude_unset (vs exclude_none): apply only fields the client
+        # explicitly sent, BUT include explicit nulls. Needed so an Edit
+        # Trade form can flip Funding Account from a specific account
+        # back to "Auto" by sending account_id=null.
+        for field, value in payload.model_dump(exclude_unset=True).items():
             setattr(trade, field, value)
         await self.db.flush()
         await self._recalculate_position(trade.portfolio_id, trade.ticker)
