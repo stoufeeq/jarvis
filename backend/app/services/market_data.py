@@ -53,10 +53,7 @@ class MarketDataService:
 
         def _fetch():
             t = yf.Ticker(ticker)
-            # history() is more reliable than fast_info across weekends/holidays
-            df = t.history(period="5d", interval="1d")
-            if df.empty:
-                raise ValueError(f"No data for {ticker}")
+            info = t.fast_info
 
             def _f(v):
                 """Float-cast and return None for NaN/Inf."""
@@ -66,11 +63,39 @@ class MarketDataService:
                 except (TypeError, ValueError):
                     return None
 
-            info = t.fast_info
-            current = _f(df["Close"].iloc[-1])
+            # Primary: history(). It's usually correct across weekends/
+            # holidays. But yfinance occasionally publishes NaN closes for
+            # actively-traded tickers (a 2026-06-19 example: SMH).
+            # Fall back to fast_info, which had real values for the same
+            # tickers in those cases.
+            df = t.history(period="5d", interval="1d")
+            current = None
+            prev = None
+            volume = None
+            if not df.empty:
+                current = _f(df["Close"].iloc[-1])
+                prev = _f(df["Close"].iloc[-2]) if len(df) >= 2 else None
+                volume = _f(df["Volume"].iloc[-1])
+
+            if current is None:
+                # fast_info exposes both camelCase keys and snake_case
+                # attributes depending on yfinance version.
+                current = _f(
+                    info.get("lastPrice")
+                    or info.get("regularMarketPrice")
+                    or info.get("last_price")
+                )
+            if prev is None:
+                prev = _f(
+                    info.get("previousClose")
+                    or info.get("regularMarketPreviousClose")
+                    or info.get("previous_close")
+                )
+            if volume is None:
+                volume = _f(info.get("lastVolume") or info.get("last_volume"))
+
             if current is None:
                 raise ValueError(f"No finite price for {ticker}")
-            prev = _f(df["Close"].iloc[-2]) if len(df) >= 2 else current
             if prev is None:
                 prev = current
             change = round(current - prev, 4)
@@ -82,7 +107,7 @@ class MarketDataService:
                 "previous_close": prev,
                 "change": change,
                 "change_pct": change_pct,
-                "volume": int(df["Volume"].iloc[-1]),
+                "volume": int(volume) if volume is not None else 0,
                 "market_cap": _f(getattr(info, "market_cap", None)),
                 "fifty_two_week_high": _f(getattr(info, "year_high", None)),
                 "fifty_two_week_low": _f(getattr(info, "year_low", None)),
