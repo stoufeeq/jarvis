@@ -707,7 +707,7 @@ export default function PortfolioPage() {
                 onChange={setDisplayCurrency}
               />
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
               <SummaryCard
                 label="Total Portfolio Value"
                 value={mv(formatCurrency(convert(liveSummary?.totalValue ?? summary?.total_value), displayCurrency))}
@@ -723,6 +723,12 @@ export default function PortfolioPage() {
                 value={mv(formatCurrency(convert(liveSummary?.totalPnl ?? summary?.total_pnl), displayCurrency))}
                 valueClass={isPrivate ? undefined : pnlColor(liveSummary?.totalPnl ?? summary?.total_pnl)}
                 note={isPrivate ? undefined : currencyLabel(displayCurrency)}
+              />
+              <SummaryCard
+                label="Realised P&L"
+                value={mv(formatCurrency(convert(summary?.realised_pnl), displayCurrency))}
+                valueClass={isPrivate ? undefined : pnlColor(summary?.realised_pnl)}
+                note={isPrivate ? undefined : "lifetime"}
               />
               <SummaryCard
                 label="Return"

@@ -48,8 +48,12 @@ class PortfolioSummary(PortfolioRead):
     """PortfolioRead + computed P&L totals."""
     total_value: float | None = None
     total_cost: float | None = None
-    total_pnl: float | None = None
+    total_pnl: float | None = None       # unrealised — current_price - avg_cost across open positions
     total_pnl_pct: float | None = None
+    # Cumulative realised P&L from closed trades (sell - running avg_cost
+    # × sold qty - fees). Computed via moving-avg accounting over the
+    # immutable trade ledger; not affected by reinvestment.
+    realised_pnl: float | None = None
     day_change: float | None = None      # today's $ change across all positions
     day_change_pct: float | None = None  # today's % change vs yesterday's close
     position_count: int = 0

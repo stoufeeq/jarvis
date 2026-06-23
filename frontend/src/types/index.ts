@@ -11,6 +11,7 @@ export interface Portfolio {
   total_cost?: number;
   total_pnl?: number;
   total_pnl_pct?: number;
+  realised_pnl?: number;
   day_change?: number;
   day_change_pct?: number;
   position_count?: number;

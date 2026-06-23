@@ -312,6 +312,79 @@ class PortfolioService:
 
         await self.db.flush()
 
+    async def compute_realised_pnl(self, portfolio: Portfolio, base_ccy: str | None = None) -> float:
+        """Cumulative realised P&L from this portfolio's trade ledger.
+
+        Walks trades chronologically with moving-average-cost accounting:
+        - buy: updates running avg_cost  ((qty*avg + buy_qty*buy_px + fees) / new_qty)
+        - sell: locks in (sell_px - running_avg) * sell_qty - sell_fees, avg unchanged
+
+        Returns FX-converted to base_ccy (defaults to portfolio's base
+        currency). Long-only for now — short/cover are skipped with a log
+        line (paper-trader is bullish-only and manual short trades are
+        rare; can add inverse-side logic when needed).
+        """
+        base = (base_ccy or portfolio.currency or "USD").upper()
+
+        trades_result = await self.db.execute(
+            select(Trade).where(Trade.portfolio_id == portfolio.id)
+            .order_by(Trade.traded_at.asc(), Trade.id.asc())
+        )
+        trades = list(trades_result.scalars().all())
+        if not trades:
+            return 0.0
+
+        # FX rates per non-base currency used in any trade.
+        foreign = list({
+            (t.currency or "USD").upper() for t in trades
+            if (t.currency or "USD").upper() != base
+        })
+        fx_rates: dict[str, float] = {}
+        if foreign:
+            try:
+                fx_rates = await MarketDataService().get_fx_rates(foreign, base=base)
+            except Exception:
+                pass  # fall back to 1:1 if FX fetch fails
+
+        def to_base(amount: float, ccy: str) -> float:
+            ccy = (ccy or "USD").upper()
+            if ccy == base:
+                return amount
+            rate = fx_rates.get(ccy)
+            return amount * rate if rate else amount
+
+        # Per-ticker (running_qty, running_avg_cost) in the trade's currency.
+        # If a ticker is traded in mixed currencies (rare), each currency
+        # segment is conceptually a separate book — but the running state
+        # mixes them; the FX-to-base happens at realisation, so mixing only
+        # distorts the *avg_cost* not the *realised total*. Acceptable.
+        state: dict[str, tuple[float, float]] = {}
+        realised_base = 0.0
+
+        for t in trades:
+            ticker = t.ticker
+            qty = float(t.quantity)
+            price = float(t.price)
+            fees = float(t.fees or 0)
+            ccy = (t.currency or "USD").upper()
+            running_qty, running_avg = state.get(ticker, (0.0, 0.0))
+
+            if t.action == TradeAction.buy:
+                new_qty = running_qty + qty
+                if new_qty > 0:
+                    new_avg = ((running_qty * running_avg) + (qty * price) + fees) / new_qty
+                    state[ticker] = (new_qty, new_avg)
+            elif t.action == TradeAction.sell:
+                if running_qty <= 0:
+                    continue  # selling something we don't have on the books
+                sell_qty = min(qty, running_qty)
+                realised_trade_ccy = (price - running_avg) * sell_qty - fees
+                realised_base += to_base(realised_trade_ccy, ccy)
+                state[ticker] = (running_qty - sell_qty, running_avg)
+            # short/cover: skipped (long-only realised tracking for v1)
+
+        return realised_base
+
     async def get_summary(self, portfolio: Portfolio) -> PortfolioSummary:
         positions = await self.list_positions(portfolio.id)
         base_ccy = (portfolio.currency or "USD").upper()
@@ -395,6 +468,8 @@ class PortfolioService:
                 return None
             return None if not math.isfinite(v) else round(v, 2)
 
+        realised_pnl = await self.compute_realised_pnl(portfolio, base_ccy)
+
         return PortfolioSummary(
             **{c.key: getattr(portfolio, c.key) for c in portfolio.__table__.columns},
             is_auto_managed=await self.is_auto_managed(portfolio.id),
@@ -402,6 +477,7 @@ class PortfolioService:
             total_cost=_safe(total_cost) or 0.0,
             total_pnl=_safe(total_pnl) or 0.0,
             total_pnl_pct=_safe(total_pnl_pct),
+            realised_pnl=_safe(realised_pnl) or 0.0,
             day_change=_safe(day_change) or 0.0,
             day_change_pct=_safe(day_change_pct),
             position_count=len(positions),

@@ -160,6 +160,12 @@ export default function DashboardPage() {
   const totalValue = portfolioValue + liquidityUsd;
   const totalPnl = liveTotals?.totalPnl
     ?? portfolios.reduce((s, p) => s + toUsd(p.total_pnl ?? 0, p.currency || "USD"), 0);
+  // Realised P&L comes from the trade ledger and is independent of live
+  // prices, so we always read it from the per-portfolio summary.
+  const realisedPnl = portfolios.reduce(
+    (s, p) => s + toUsd(p.realised_pnl ?? 0, p.currency || "USD"),
+    0,
+  );
   const totalDayChange = liveTotals?.dayChange
     ?? portfolios.reduce((s, p) => s + toUsd(p.day_change ?? 0, p.currency || "USD"), 0);
   const prevTotal = portfolioValue - totalDayChange;
@@ -192,7 +198,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
         <StatCard
           label="Total Value"
           value={mv(formatCurrency(convert(totalValue), displayCurrency))}
@@ -209,6 +215,12 @@ export default function DashboardPage() {
           value={mv(formatCurrency(convert(totalPnl), displayCurrency))}
           valueClass={isPrivate ? undefined : pnlColor(totalPnl)}
           note={isPrivate ? undefined : currencyLabel(displayCurrency)}
+        />
+        <StatCard
+          label="Realised P&L"
+          value={mv(formatCurrency(convert(realisedPnl), displayCurrency))}
+          valueClass={isPrivate ? undefined : pnlColor(realisedPnl)}
+          note={isPrivate ? undefined : "lifetime"}
         />
         <StatCard
           label="Today's Change"
