@@ -20,6 +20,7 @@ celery_app = Celery(
         "app.workers.tasks.calendar_refresh",
         "app.workers.tasks.auto_trader",
         "app.workers.tasks.market_snapshot",
+        "app.workers.tasks.briefing_pregenerate",
     ],
 )
 
@@ -102,5 +103,17 @@ celery_app.conf.beat_schedule = {
     "refresh-market-snapshot": {
         "task": "app.workers.tasks.market_snapshot.refresh_market_snapshot",
         "schedule": crontab(hour="0,4,8,12,16,20", minute="15"),
+    },
+    # Pre-generate today's daily briefing at 8:30 AM US/Eastern (1h before
+    # US market open). Scheduled at BOTH 12:30 UTC (matches 8:30 EDT) and
+    # 13:30 UTC (matches 8:30 EST) — the task self-checks the current ET
+    # hour and only generates when it's 8, so the DST-mirror entry no-ops.
+    "pregenerate-briefing-edt": {
+        "task": "app.workers.tasks.briefing_pregenerate.pregenerate_today",
+        "schedule": crontab(hour=12, minute=30),
+    },
+    "pregenerate-briefing-est": {
+        "task": "app.workers.tasks.briefing_pregenerate.pregenerate_today",
+        "schedule": crontab(hour=13, minute=30),
     },
 }
