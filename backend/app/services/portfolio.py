@@ -385,6 +385,144 @@ class PortfolioService:
 
         return realised_base
 
+    async def compute_equity_curve(
+        self,
+        portfolio: Portfolio,
+        period: str = "6mo",
+        base_ccy: str | None = None,
+    ) -> list[dict]:
+        """Daily portfolio market value and cost basis over `period`.
+
+        Reconstructs holdings on each trading day from the trade ledger
+        (no snapshot table), then values them with daily closes.
+
+        - period: yfinance-style — "1mo", "3mo", "6mo", "1y", "2y", "5y", "max", "ytd"
+        - Multi-currency: positions in foreign currencies are FX-converted
+          at *today's* rate (not the historical rate per day). Good enough
+          for v1; revisit if users need true HPR across FX moves.
+        - Holdings start fresh on the *first trade date*, so portfolios
+          imported via CSV get a curve from that date forward.
+        """
+        import pandas as pd
+
+        base = (base_ccy or portfolio.currency or "USD").upper()
+
+        trades_result = await self.db.execute(
+            select(Trade).where(Trade.portfolio_id == portfolio.id)
+            .order_by(Trade.traded_at.asc(), Trade.id.asc())
+        )
+        trades = list(trades_result.scalars().all())
+        if not trades:
+            return []
+
+        tickers = sorted({t.ticker for t in trades})
+
+        # Today's FX (single snapshot — see docstring). Done once outside
+        # the per-ticker loop.
+        ticker_ccy: dict[str, str] = {
+            t.ticker: (t.currency or "USD").upper() for t in trades
+        }
+        foreign = [c for c in set(ticker_ccy.values()) if c != base]
+        fx: dict[str, float] = {}
+        if foreign:
+            try:
+                fx = await MarketDataService().get_fx_rates(foreign, base=base)
+            except Exception:
+                pass
+
+        def to_base(amount: float, ccy: str) -> float:
+            if ccy == base:
+                return amount
+            rate = fx.get(ccy)
+            return amount * rate if rate else amount
+
+        # ── Fetch daily closes for every traded ticker over `period` ──
+        # Done in a thread (yfinance is sync) — gather to overlap network.
+        svc = MarketDataService()
+
+        async def _closes(ticker: str) -> pd.Series:
+            try:
+                df = await svc.get_ohlcv_dataframe(ticker, period=period, interval="1d")
+                if df is None or df.empty:
+                    return pd.Series(dtype=float, name=ticker)
+                closes = df["Close"].copy()
+                # Strip tz so index is plain date for clean joining.
+                closes.index = pd.to_datetime(closes.index).tz_localize(None).normalize()
+                closes.name = ticker
+                return closes
+            except Exception:
+                return pd.Series(dtype=float, name=ticker)
+
+        import asyncio
+        series_list = await asyncio.gather(*(_closes(t) for t in tickers))
+
+        # Outer-join all series into one wide frame indexed by date.
+        non_empty = [s for s in series_list if not s.empty]
+        if not non_empty:
+            return []
+        prices = pd.concat(non_empty, axis=1).sort_index().ffill()
+
+        # ── Walk dates, replaying trades up to each date ──────────────
+        # qty + cost basis per ticker, advancing through the trade list
+        # in lockstep with the price dates.
+        date_index = prices.index
+        first_trade_date = pd.to_datetime(trades[0].traded_at).tz_localize(None).normalize()
+        date_index = date_index[date_index >= first_trade_date]
+        if date_index.empty:
+            return []
+
+        qty: dict[str, float] = {t: 0.0 for t in tickers}
+        avg_cost: dict[str, float] = {t: 0.0 for t in tickers}
+        # Per-ticker cost basis in trade currency. Cost basis = qty * avg_cost.
+        # Sells reduce cost basis at avg_cost (not at sell price) — same
+        # convention as compute_realised_pnl.
+        trade_idx = 0
+        curve: list[dict] = []
+
+        for date in date_index:
+            # Apply every trade with traded_at <= this date that hasn't
+            # been applied yet.
+            while trade_idx < len(trades):
+                t = trades[trade_idx]
+                t_date = pd.to_datetime(t.traded_at).tz_localize(None).normalize()
+                if t_date > date:
+                    break
+                tk = t.ticker
+                tq = float(t.quantity)
+                tp = float(t.price)
+                tf = float(t.fees or 0)
+                rq, ra = qty[tk], avg_cost[tk]
+                if t.action == TradeAction.buy:
+                    new_qty = rq + tq
+                    if new_qty > 0:
+                        avg_cost[tk] = ((rq * ra) + (tq * tp) + tf) / new_qty
+                        qty[tk] = new_qty
+                elif t.action == TradeAction.sell:
+                    if rq > 0:
+                        qty[tk] = max(0.0, rq - tq)
+                trade_idx += 1
+
+            market_value = 0.0
+            cost_basis = 0.0
+            for tk in tickers:
+                q = qty[tk]
+                if q <= 0:
+                    continue
+                px = prices[tk].get(date) if tk in prices.columns else None
+                if px is None or not math.isfinite(float(px)):
+                    continue
+                ccy = ticker_ccy[tk]
+                market_value += to_base(q * float(px), ccy)
+                cost_basis += to_base(q * avg_cost[tk], ccy)
+
+            curve.append({
+                "date": date.strftime("%Y-%m-%d"),
+                "market_value": round(market_value, 2),
+                "cost_basis": round(cost_basis, 2),
+            })
+
+        return curve
+
     async def get_summary(self, portfolio: Portfolio) -> PortfolioSummary:
         positions = await self.list_positions(portfolio.id)
         base_ccy = (portfolio.currency or "USD").upper()

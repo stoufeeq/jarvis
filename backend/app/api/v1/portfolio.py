@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -105,6 +105,27 @@ async def get_portfolio(
         raise NotFoundError("Portfolio not found")
     _assert_owner(p, user)
     return await svc.get_summary(p)
+
+
+@router.get("/{portfolio_id}/performance")
+async def get_portfolio_performance(
+    portfolio_id: int,
+    period: str = Query("6mo", regex="^(1mo|3mo|6mo|1y|2y|5y|ytd|max)$"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Daily market value + cost basis series for the portfolio over `period`.
+
+    Returned as `[{date, market_value, cost_basis}, ...]` in the
+    portfolio's base currency. Empty list if the portfolio has no trades.
+    """
+    svc = PortfolioService(db)
+    p = await svc.get(portfolio_id)
+    if not p:
+        raise NotFoundError("Portfolio not found")
+    _assert_owner(p, user)
+    curve = await svc.compute_equity_curve(p, period=period)
+    return {"portfolio_id": portfolio_id, "currency": p.currency, "period": period, "points": curve}
 
 
 @router.patch("/{portfolio_id}", response_model=PortfolioRead)

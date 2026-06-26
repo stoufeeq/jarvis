@@ -82,6 +82,8 @@ export const portfolioApi = {
   create: (data: object) => api.post("/portfolios/", data),
   update: (id: number, data: object) => api.patch(`/portfolios/${id}`, data),
   positions: (id: number) => api.get(`/portfolios/${id}/positions`),
+  performance: (id: number, period: string = "6mo") =>
+    api.get(`/portfolios/${id}/performance`, { params: { period } }),
   trades: (id: number) => api.get(`/portfolios/${id}/trades`),
   addTrade: (id: number, data: object) => api.post(`/portfolios/${id}/trades`, data),
   updateTrade: (id: number, tradeId: number, data: object) =>

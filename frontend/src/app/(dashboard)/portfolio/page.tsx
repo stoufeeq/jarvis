@@ -8,6 +8,7 @@ import { useCurrencyDisplay } from "@/hooks/useCurrencyDisplay";
 import { CurrencySwitcher } from "@/components/ui/CurrencySwitcher";
 import { PrivacyToggle } from "@/components/ui/PrivacyToggle";
 import { InlineChart } from "@/components/charts/InlineChart";
+import { PortfolioPerformanceChart } from "@/components/charts/PortfolioPerformanceChart";
 import { AnimatedNumber } from "@/components/ui/AnimatedNumber";
 import { usePrivacyStore } from "@/store/privacy";
 import { useTradingModeStore } from "@/store/tradingMode";
@@ -743,6 +744,11 @@ export default function PortfolioPage() {
               />
             </div>
           </div>
+
+          {/* Performance chart — equity curve over selected period */}
+          {selectedId && (
+            <PortfolioPerformanceChart portfolioId={selectedId} isPrivate={isPrivate} />
+          )}
 
           {/* Auto-managed portfolio banner: explain why manual actions are hidden */}
           {summary?.is_auto_managed && (
