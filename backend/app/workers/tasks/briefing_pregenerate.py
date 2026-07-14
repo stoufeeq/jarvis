@@ -9,10 +9,10 @@ actually generates briefings. Keeps DST handling correct without
 external scheduler libraries (Celery's built-in PersistentScheduler
 doesn't do per-task timezones).
 
-The underlying BriefingService.get_or_create_today is idempotent — if
-the user already opened the app this morning and triggered a generation,
-this task is a no-op for them. So it's also safe if a user manually
-regenerates after our pre-gen.
+BriefingService.get_or_create_today is serialised by a per-(user,day)
+Postgres advisory lock, so this task is safe to run concurrently with
+the user opening the app — only one side will actually generate; the
+other will find the fresh row and return it.
 """
 
 import asyncio
@@ -48,23 +48,29 @@ async def _run() -> None:
         )
         return
 
+    # Read the user list in one session, then commit + close so the
+    # per-user advisory locks acquired below don't accumulate on a single
+    # long-lived transaction (which would keep locks held across the
+    # entire user loop and needlessly block concurrent app requests).
     async with AsyncSessionLocal() as db:
         users = list((await db.execute(
             select(User).where(User.is_active.is_(True))
         )).scalars().all())
 
-        if not users:
-            log.info("Briefing pre-gen: no active users to process")
-            return
+    if not users:
+        log.info("Briefing pre-gen: no active users to process")
+        return
 
-        generated = cached = errors = 0
-        for user in users:
-            try:
+    generated = cached = errors = 0
+    for user in users:
+        try:
+            # Fresh session per user so the advisory lock acquired inside
+            # BriefingService is released as soon as this user's briefing
+            # is committed — not held until the whole loop finishes.
+            async with AsyncSessionLocal() as db:
                 svc = BriefingService(db)
-                # If today's briefing already exists (user opened app first,
-                # or another mirror firing already produced one), this just
-                # returns the cached row — no new Gemini call, no cost.
                 briefing = await svc.get_or_create_today(user)
+                await db.commit()
                 # Distinguish "we just made it" from "found existing": the
                 # row's generated_at is within the last 60s if we generated.
                 age = (datetime.now(briefing.generated_at.tzinfo) - briefing.generated_at).total_seconds()
@@ -81,14 +87,14 @@ async def _run() -> None:
                         "(age %.0fs), skipped",
                         user.email, age,
                     )
-            except Exception as exc:
-                errors += 1
-                log.warning(
-                    "Briefing pre-gen: failed for user %s: %s",
-                    user.id, exc,
-                )
+        except Exception as exc:
+            errors += 1
+            log.warning(
+                "Briefing pre-gen: failed for user %s: %s",
+                user.id, exc,
+            )
 
-        log.info(
-            "Briefing pre-gen done: generated=%d, already-cached=%d, errors=%d",
-            generated, cached, errors,
-        )
+    log.info(
+        "Briefing pre-gen done: generated=%d, already-cached=%d, errors=%d",
+        generated, cached, errors,
+    )

@@ -54,7 +54,7 @@ import xml.etree.ElementTree as ET
 from datetime import UTC, date, datetime, timedelta
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -73,6 +73,13 @@ MAX_SIGNALS_PER_TICKER = 3
 MAX_NEWS_ITEMS = 10
 MAX_MARKET_HEADLINES = 12
 
+
+def _as_utc(dt: datetime) -> datetime:
+    """Normalise a datetime to UTC-aware. Postgres returns tz-aware
+    datetimes; SQLite (test DB) strips tzinfo and returns them naive.
+    Both need to be UTC-comparable."""
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
 # Yahoo Finance RSS feeds for general market news
 MARKET_NEWS_FEEDS = [
     ("S&P 500", "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%5EGSPC&region=US&lang=en-US"),
@@ -87,17 +94,98 @@ class BriefingService:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
+    # Minimum age (in minutes) of the latest briefing before regenerate
+    # is willing to actually re-generate. Guards against the Regenerate
+    # button spamming Gemini + Telegram if clicked repeatedly, and mirrors
+    # the "if within a few mins, use cache" expectation.
+    REGENERATE_MIN_AGE_MINUTES = 30
+
     async def get_or_create_today(self, user: User) -> DailyBriefing:
-        """Return the most recent briefing for today, generating one if none exists yet."""
+        """Return the most recent briefing for today, generating one if none exists yet.
+
+        Uses a Postgres advisory lock keyed on (user_id, briefing_date)
+        so concurrent callers (pre-gen Celery task + user opening the app
+        + multi-tab / multi-device) don't all pass the existence check
+        and each fire a Gemini call + Telegram push. The lock releases
+        automatically at transaction end.
+        """
         today = datetime.now(UTC).date()
         existing = await self._get_latest_by_date(user.id, today)
         if existing:
             return existing
-        return await self._generate(user, today)
+        # No briefing yet: pass since_ts=None so the in-lock re-check
+        # accepts any today's briefing produced by a concurrent caller.
+        return await self._locked_generate(user, today, since_ts=None)
 
     async def regenerate_today(self, user: User) -> DailyBriefing:
-        """Generate a new briefing for today, keeping all previous ones in history."""
+        """Generate a new briefing for today, keeping all previous ones in history.
+
+        If a briefing was already generated within the last
+        REGENERATE_MIN_AGE_MINUTES, returns that instead of calling
+        Gemini again — so a Regenerate double-click (or rapid retry
+        after a slow response) doesn't produce duplicates.
+        """
         today = datetime.now(UTC).date()
+        # Timestamp captured BEFORE we take the lock, so the in-lock
+        # re-check only counts briefings written concurrently with us —
+        # a stale row from earlier today (which we've already decided to
+        # regenerate past) won't cause _locked_generate to short-circuit.
+        started_at = datetime.now(UTC)
+        recent = await self._get_latest_by_date(user.id, today)
+        if recent:
+            generated_at = _as_utc(recent.generated_at)
+            age = started_at - generated_at
+            if age < timedelta(minutes=self.REGENERATE_MIN_AGE_MINUTES):
+                log.info(
+                    "regenerate_today: returning briefing %d (age %ds < %dmin) for user %s",
+                    recent.id, age.total_seconds(),
+                    self.REGENERATE_MIN_AGE_MINUTES, user.email,
+                )
+                return recent
+        return await self._locked_generate(user, today, since_ts=started_at)
+
+    async def _locked_generate(
+        self,
+        user: User,
+        today: date,
+        since_ts: datetime | None,
+    ) -> DailyBriefing:
+        """Acquire the per-(user, day) advisory lock, re-check for a
+        briefing produced concurrently (created after `since_ts`), then
+        generate.
+
+        `since_ts`:
+        - None → caller is get_or_create_today (no briefing existed
+          before). Any today's briefing found in the re-check was made
+          by a concurrent generator and can be reused.
+        - datetime → caller is regenerate_today past the min-age guard.
+          Only briefings written after this timestamp count as
+          concurrent; older ones are the stale row we're regenerating
+          past and MUST NOT short-circuit generation.
+
+        Postgres pg_advisory_xact_lock takes a bigint. We derive it via
+        hashtextextended so the key space is well-distributed and stable
+        across calls. The lock is transaction-scoped and releases
+        automatically when the outer request/session transaction ends.
+        """
+        lock_key_expr = f"briefing:{user.id}:{today.isoformat()}"
+        # SQLite (used in tests) doesn't have advisory locks. Skip the
+        # lock statement there so unit tests still work; on Postgres
+        # this becomes a real transaction-scoped lock.
+        dialect = self.db.bind.dialect.name if self.db.bind else "postgresql"
+        if dialect == "postgresql":
+            await self.db.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+                {"k": lock_key_expr},
+            )
+
+        # Re-check inside the lock: another caller may have committed
+        # while we were waiting. Only rows newer than since_ts count
+        # (see docstring).
+        latest = await self._get_latest_by_date(user.id, today)
+        if latest and (since_ts is None or _as_utc(latest.generated_at) > since_ts):
+            return latest
+
         return await self._generate(user, today)
 
     async def get_history(self, user_id: int, limit: int = 30) -> list[DailyBriefing]:
