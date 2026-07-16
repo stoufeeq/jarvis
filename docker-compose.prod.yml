@@ -4,11 +4,27 @@ services:
   # In production all services live on the same Docker network and must use
   # internal container names + standard ports. These environment values override
   # whatever .env says.
+  #
+  # Memory caps sized for a 4 GB Hetzner CX23 (leaves ~500 MB headroom for OS +
+  # Docker). Without these, a runaway backtest / heavy yfinance pull can push a
+  # single container past what's free and get OOM-killed by the kernel, taking
+  # down user-facing traffic. `restart: unless-stopped` auto-recovers if that
+  # still happens (was previously implicit "no" — a killed backend stayed down).
+
+  postgres:
+    restart: unless-stopped
+    mem_limit: 700m
+
+  redis:
+    restart: unless-stopped
+    mem_limit: 200m
 
   backend:
     image: ghcr.io/stoufeeq/jarvis-backend:latest
     build:
       context: ./backend
+    restart: unless-stopped
+    mem_limit: 1200m
     environment:
       DATABASE_URL: postgresql+asyncpg://jarvis:jarvis_dev@postgres:5432/jarvis
       DATABASE_URL_SYNC: postgresql://jarvis:jarvis_dev@postgres:5432/jarvis
@@ -23,6 +39,8 @@ services:
     image: ghcr.io/stoufeeq/jarvis-backend:latest
     build:
       context: ./backend
+    restart: unless-stopped
+    mem_limit: 900m
     environment:
       COMMAND: worker  # entrypoint switches on this — without it, container runs uvicorn instead
       DATABASE_URL: postgresql+asyncpg://jarvis:jarvis_dev@postgres:5432/jarvis
@@ -38,6 +56,8 @@ services:
     image: ghcr.io/stoufeeq/jarvis-backend:latest
     build:
       context: ./backend
+    restart: unless-stopped
+    mem_limit: 250m
     environment:
       COMMAND: beat  # entrypoint switches on this — without it, container runs uvicorn instead
       DATABASE_URL: postgresql+asyncpg://jarvis:jarvis_dev@postgres:5432/jarvis
@@ -53,6 +73,8 @@ services:
     image: ghcr.io/stoufeeq/jarvis-backend:latest
     build:
       context: ./backend
+    restart: unless-stopped
+    mem_limit: 200m
     environment:
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1

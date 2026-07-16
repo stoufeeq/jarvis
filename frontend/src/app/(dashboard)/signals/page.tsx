@@ -1111,8 +1111,12 @@ function BacktestTab() {
   const [capitalPerTrade, setCapitalPerTrade] = useState(1000);
   const [tickerFilter, setTickerFilter] = useState("");
   const [result, setResult] = useState<BacktestResult | null>(null);
+  // Backtest is dispatched to Celery and polled: this holds the task id
+  // between dispatch and completion. The status useQuery below is enabled
+  // as long as we have an id and no result yet.
+  const [taskId, setTaskId] = useState<string | null>(null);
 
-  const runMutation = useMutation({
+  const dispatchMutation = useMutation({
     mutationFn: () => signalsApi.backtest({
       signal_type: signalType || null,
       direction: direction || null,
@@ -1121,9 +1125,33 @@ function BacktestTab() {
       capital_per_trade: capitalPerTrade,
       ticker: tickerFilter.trim() || null,
     }),
-    onSuccess: (res) => setResult(res.data),
-    onError: () => toast.error("Backtest failed"),
+    onSuccess: (res) => {
+      setResult(null);
+      setTaskId(res.data.task_id);
+    },
+    onError: () => toast.error("Failed to start backtest"),
   });
+
+  // Poll the task status every 2s until we have a result or an error.
+  useQuery({
+    queryKey: ["backtest-status", taskId],
+    queryFn: async () => {
+      const r = await signalsApi.backtestStatus(taskId!);
+      const data = r.data as { status: string; result?: BacktestResult; error?: string };
+      if (data.status === "success" && data.result) {
+        setResult(data.result);
+        setTaskId(null);
+      } else if (data.status === "failure") {
+        toast.error(`Backtest failed: ${data.error ?? "unknown error"}`);
+        setTaskId(null);
+      }
+      return data;
+    },
+    enabled: !!taskId,
+    refetchInterval: 2000,
+  });
+
+  const isRunning = dispatchMutation.isPending || !!taskId;
 
   return (
     <div className="space-y-6">
@@ -1214,11 +1242,11 @@ function BacktestTab() {
         </div>
 
         <button
-          onClick={() => runMutation.mutate()}
-          disabled={runMutation.isPending}
+          onClick={() => dispatchMutation.mutate()}
+          disabled={isRunning}
           className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50"
         >
-          {runMutation.isPending ? "Running…" : "Run backtest"}
+          {isRunning ? "Running…" : "Run backtest"}
         </button>
       </div>
 

@@ -21,6 +21,7 @@ celery_app = Celery(
         "app.workers.tasks.auto_trader",
         "app.workers.tasks.market_snapshot",
         "app.workers.tasks.briefing_pregenerate",
+        "app.workers.tasks.backtest",
     ],
 )
 

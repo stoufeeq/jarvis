@@ -141,6 +141,7 @@ export const signalsApi = {
     capital_per_trade?: number;
     ticker?: string | null;
   }) => api.post("/signals/backtest", data),
+  backtestStatus: (taskId: string) => api.get(`/signals/backtest/${taskId}`),
 };
 
 export const advisorApi = {

@@ -112,6 +112,7 @@ jobs:
             docker stop jarvis-frontend 2>/dev/null || true
             docker rm jarvis-frontend 2>/dev/null || true
             docker run -d --name jarvis-frontend --restart unless-stopped \
+              --memory 500m \
               -e GIT_SHA="$GIT_SHA" \
               -p 3000:3000 ghcr.io/stoufeeq/jarvis-frontend:latest
 

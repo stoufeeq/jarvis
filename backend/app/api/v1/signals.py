@@ -8,7 +8,6 @@ from app.models.signal import SignalDirection, SignalType
 from app.models.user import User
 from app.schemas.signal import SignalOutcomeRead, SignalRead
 from app.schemas.insider_trade import InsiderTradeRead
-from app.services.backtest import BacktestService
 from app.services.signal_aggregator import SignalAggregator
 from app.services.signal_engine import SignalEngine
 from app.services.signal_outcome import SignalOutcomeService
@@ -117,22 +116,48 @@ async def get_aggregated_signals_by_ticker(
     return await SignalAggregator(db).aggregated_by_ticker(limit=limit)
 
 
-@router.post("/backtest")
+@router.post("/backtest", status_code=202)
 async def run_backtest(
     payload: BacktestRequest,
     _: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
 ):
-    """Simulate a strategy over the existing signal_outcomes data.
-    Returns metrics, equity curve, and SPY benchmark comparison."""
-    return await BacktestService(db).simulate(
-        signal_type=payload.signal_type,
-        direction=payload.direction,
+    """Dispatch a backtest to Celery so the simulation runs in the worker
+    container (frees the API request quickly and won't OOM the API if
+    the simulation blows up). Returns a task_id; poll GET /backtest/{id}
+    for the result."""
+    from app.workers.tasks.backtest import run_backtest_task
+    task = run_backtest_task.delay(
+        signal_type=payload.signal_type.value if payload.signal_type else None,
+        direction=payload.direction.value if payload.direction else None,
         min_strength=payload.min_strength,
         hold_period=payload.hold_period,
         capital_per_trade=payload.capital_per_trade,
         ticker=payload.ticker,
     )
+    return {"task_id": task.id, "status": "dispatched"}
+
+
+@router.get("/backtest/{task_id}")
+async def get_backtest_status(
+    task_id: str,
+    _: User = Depends(get_current_user),
+):
+    """Poll a dispatched backtest. Returns:
+    - {status: "pending"}   — worker hasn't started or is still running
+    - {status: "success", result: {...}}   — done, includes the simulation payload
+    - {status: "failure", error: "..."}    — task raised; error message included
+    """
+    from app.workers.celery_app import celery_app
+    result = celery_app.AsyncResult(task_id)
+    state = result.state
+    if state in ("PENDING", "STARTED", "RETRY"):
+        return {"status": "pending", "state": state}
+    if state == "SUCCESS":
+        return {"status": "success", "result": result.result}
+    if state == "FAILURE":
+        return {"status": "failure", "error": str(result.result)}
+    # Any other Celery state (REVOKED, RECEIVED, custom): treat as pending.
+    return {"status": "pending", "state": state}
 
 
 @router.post("/outcomes/backfill", status_code=202)
