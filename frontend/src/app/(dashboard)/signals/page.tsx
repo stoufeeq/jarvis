@@ -1103,6 +1103,14 @@ function PerfCells({ cell }: { cell: { hit_rate: number | null; avg_gain_pct: nu
 
 /* ── Backtest tab ─────────────────────────────────────────────────────────── */
 
+// Backtest is dispatched to Celery and polled: task_id is persisted to
+// localStorage so a page refresh reconnects to the same in-flight task
+// instead of stranding it in the worker with no way to retrieve the
+// result. Task IDs are short-lived (Redis result backend TTL) so a stale
+// entry from a much earlier session just returns pending → success/failure
+// → we clear it. Cleared automatically once a terminal state is seen.
+const BACKTEST_TASK_STORAGE_KEY = "jarvis_backtest_task_id";
+
 function BacktestTab() {
   const [signalType, setSignalType] = useState("");
   const [direction, setDirection] = useState("");
@@ -1111,10 +1119,20 @@ function BacktestTab() {
   const [capitalPerTrade, setCapitalPerTrade] = useState(1000);
   const [tickerFilter, setTickerFilter] = useState("");
   const [result, setResult] = useState<BacktestResult | null>(null);
-  // Backtest is dispatched to Celery and polled: this holds the task id
-  // between dispatch and completion. The status useQuery below is enabled
-  // as long as we have an id and no result yet.
-  const [taskId, setTaskId] = useState<string | null>(null);
+  // Initialise from localStorage so refresh doesn't lose an in-flight task.
+  const [taskId, setTaskIdState] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem(BACKTEST_TASK_STORAGE_KEY);
+  });
+
+  // Wrap the state setter so localStorage stays in sync in one place.
+  const setTaskId = (id: string | null) => {
+    if (typeof window !== "undefined") {
+      if (id) localStorage.setItem(BACKTEST_TASK_STORAGE_KEY, id);
+      else localStorage.removeItem(BACKTEST_TASK_STORAGE_KEY);
+    }
+    setTaskIdState(id);
+  };
 
   const dispatchMutation = useMutation({
     mutationFn: () => signalsApi.backtest({
@@ -1249,6 +1267,23 @@ function BacktestTab() {
           {isRunning ? "Running…" : "Run backtest"}
         </button>
       </div>
+
+      {/* Running indicator — reassures user the task is in flight and
+          survives refresh (task_id persists to localStorage). */}
+      {isRunning && (
+        <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 px-4 py-3 text-sm text-blue-300">
+          <div className="flex items-center gap-2">
+            <div className="h-2 w-2 rounded-full bg-blue-400 animate-pulse" />
+            <span>
+              Backtest running in background. Safe to refresh or navigate away —
+              results will appear here when done (polling every 2s).
+            </span>
+          </div>
+          {taskId && (
+            <div className="mt-1 text-xs text-blue-400/70 font-mono">task {taskId.slice(0, 8)}</div>
+          )}
+        </div>
+      )}
 
       {/* Results */}
       {result && <BacktestResultsView result={result} />}
