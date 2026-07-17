@@ -12,6 +12,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { alertsApi, marketApi } from "@/lib/api";
 import type { Alert } from "@/types";
 import toast from "react-hot-toast";
+import { installErrorLogging } from "@/lib/notify";
 
 const ALERT_POLL_MS = 60_000; // check every 60 seconds
 
@@ -60,6 +61,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router = useRouter();
   const accessToken = useAuthStore((s) => s.accessToken);
   const [hydrated, setHydrated] = useState(false);
+
+  // Monkey-patch toast.error so every existing call site (there are
+  // ~50 across the app) also records the message to the persistent
+  // error log. Runs once per module load.
+  useEffect(() => {
+    installErrorLogging();
+  }, []);
 
   useEffect(() => {
     const unsub = useAuthStore.persist.onFinishHydration(() => setHydrated(true));

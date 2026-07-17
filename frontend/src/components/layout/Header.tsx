@@ -8,6 +8,7 @@ import { LogOut, Search, Settings } from "lucide-react";
 import { useAuthStore } from "@/store/auth";
 import { useTradingModeStore } from "@/store/tradingMode";
 import { NotificationBell } from "@/components/ui/NotificationBell";
+import { ErrorLogButton } from "@/components/ui/ErrorLogButton";
 import { StockSearchModal } from "@/components/ui/StockSearchModal";
 import { MarketSessionBadge } from "@/components/ui/MarketSessionBadge";
 
@@ -91,6 +92,7 @@ export function Header() {
         >
           <Search className="w-4 h-4" />
         </button>
+        <ErrorLogButton />
         <NotificationBell />
         <Link
           href="/settings"
