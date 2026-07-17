@@ -1124,10 +1124,25 @@ function BacktestTab() {
   const [capitalPerTrade, setCapitalPerTrade] = useState(1000);
   const [tickerFilter, setTickerFilter] = useState("");
   const [result, setResult] = useState<BacktestResult | null>(null);
-  // Initialise from localStorage so refresh doesn't lose an in-flight task.
+  // Initialise from localStorage so refresh doesn't lose an in-flight
+  // task. But if the persisted task_id is already older than the orphan
+  // window, discard it silently on mount — Celery task ids expire from
+  // Redis; polling would return PENDING forever and immediately trip
+  // the mid-run orphan toast for something the user never dispatched
+  // this session. Silent clear is the correct UX.
   const [taskId, setTaskIdState] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
-    return localStorage.getItem(BACKTEST_TASK_STORAGE_KEY);
+    const storedId = localStorage.getItem(BACKTEST_TASK_STORAGE_KEY);
+    const storedAt = localStorage.getItem(BACKTEST_DISPATCHED_AT_KEY);
+    if (storedId && storedAt) {
+      const age = Date.now() - Number(storedAt);
+      if (age > BACKTEST_ORPHAN_MS) {
+        localStorage.removeItem(BACKTEST_TASK_STORAGE_KEY);
+        localStorage.removeItem(BACKTEST_DISPATCHED_AT_KEY);
+        return null;
+      }
+    }
+    return storedId;
   });
   const [dispatchedAt, setDispatchedAtState] = useState<number | null>(() => {
     if (typeof window === "undefined") return null;
