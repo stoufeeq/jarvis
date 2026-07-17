@@ -31,6 +31,12 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="UTC",
     enable_utc=True,
+    # Override Celery's built-in default queue name ("celery") so any
+    # unrouted task lands in "default", which is what our workers
+    # actually consume (-Q default,signals,market_data). Without this,
+    # a new task without an explicit route (e.g. backtest, briefing pregen)
+    # rots forever in a queue no worker listens to.
+    task_default_queue="default",
     task_routes={
         "app.workers.tasks.market_data.*": {"queue": "market_data"},
         "app.workers.tasks.signal_scan.*": {"queue": "signals"},
