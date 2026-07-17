@@ -17,7 +17,12 @@ services:
 
   redis:
     restart: unless-stopped
-    mem_limit: 200m
+    # 200m was too tight: BGSAVE forks a child that briefly counts full
+    # Redis RSS against the cgroup limit twice (copy-on-write), so a
+    # dataset only 30MB in size was tripping cgroup OOM on every snapshot
+    # (signal 9 in Redis logs → RDB save failed → stop-writes-on-bgsave-error
+    # left Redis read-only → Celery could not enqueue tasks).
+    mem_limit: 500m
 
   backend:
     image: ghcr.io/stoufeeq/jarvis-backend:latest
