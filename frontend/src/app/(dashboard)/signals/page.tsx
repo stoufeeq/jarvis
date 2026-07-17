@@ -1103,13 +1103,18 @@ function PerfCells({ cell }: { cell: { hit_rate: number | null; avg_gain_pct: nu
 
 /* ── Backtest tab ─────────────────────────────────────────────────────────── */
 
-// Backtest is dispatched to Celery and polled: task_id is persisted to
-// localStorage so a page refresh reconnects to the same in-flight task
-// instead of stranding it in the worker with no way to retrieve the
-// result. Task IDs are short-lived (Redis result backend TTL) so a stale
-// entry from a much earlier session just returns pending → success/failure
-// → we clear it. Cleared automatically once a terminal state is seen.
+// Backtest is dispatched to Celery and polled: task_id + dispatched_at
+// are persisted to localStorage so a page refresh reconnects to the
+// same in-flight task instead of stranding it in the worker with no
+// way to retrieve the result. Cleared once a terminal state (SUCCESS /
+// FAILURE) arrives — or once ORPHAN_MS has passed with no result, on
+// the assumption that Celery lost the task (worker OOM, container
+// restart) and its "PENDING" state is meaningless.
 const BACKTEST_TASK_STORAGE_KEY = "jarvis_backtest_task_id";
+const BACKTEST_DISPATCHED_AT_KEY = "jarvis_backtest_dispatched_at";
+// 6 min ≈ 4-min soft task limit + a buffer for polling latency. If
+// nothing comes back by then, treat as orphaned and clear.
+const BACKTEST_ORPHAN_MS = 6 * 60 * 1000;
 
 function BacktestTab() {
   const [signalType, setSignalType] = useState("");
@@ -1124,12 +1129,26 @@ function BacktestTab() {
     if (typeof window === "undefined") return null;
     return localStorage.getItem(BACKTEST_TASK_STORAGE_KEY);
   });
+  const [dispatchedAt, setDispatchedAtState] = useState<number | null>(() => {
+    if (typeof window === "undefined") return null;
+    const stored = localStorage.getItem(BACKTEST_DISPATCHED_AT_KEY);
+    return stored ? Number(stored) : null;
+  });
 
-  // Wrap the state setter so localStorage stays in sync in one place.
+  // Wrap the state setters so localStorage stays in sync in one place.
+  // Setting id=null clears both (task and its timestamp move together).
   const setTaskId = (id: string | null) => {
     if (typeof window !== "undefined") {
-      if (id) localStorage.setItem(BACKTEST_TASK_STORAGE_KEY, id);
-      else localStorage.removeItem(BACKTEST_TASK_STORAGE_KEY);
+      if (id) {
+        localStorage.setItem(BACKTEST_TASK_STORAGE_KEY, id);
+        const now = Date.now();
+        localStorage.setItem(BACKTEST_DISPATCHED_AT_KEY, String(now));
+        setDispatchedAtState(now);
+      } else {
+        localStorage.removeItem(BACKTEST_TASK_STORAGE_KEY);
+        localStorage.removeItem(BACKTEST_DISPATCHED_AT_KEY);
+        setDispatchedAtState(null);
+      }
     }
     setTaskIdState(id);
   };
@@ -1151,6 +1170,9 @@ function BacktestTab() {
   });
 
   // Poll the task status every 2s until we have a result or an error.
+  // Also auto-clears if the task has been "pending" past BACKTEST_ORPHAN_MS
+  // — Celery returns PENDING for unknown task ids too, so a worker OOM /
+  // container restart leaves the UI polling forever otherwise.
   useQuery({
     queryKey: ["backtest-status", taskId],
     queryFn: async () => {
@@ -1161,6 +1183,16 @@ function BacktestTab() {
         setTaskId(null);
       } else if (data.status === "failure") {
         toast.error(`Backtest failed: ${data.error ?? "unknown error"}`);
+        setTaskId(null);
+      } else if (
+        data.status === "pending" &&
+        dispatchedAt != null &&
+        Date.now() - dispatchedAt > BACKTEST_ORPHAN_MS
+      ) {
+        toast.error(
+          "Backtest appears orphaned (no result after 6 minutes). " +
+          "The worker likely restarted mid-run — try again."
+        );
         setTaskId(null);
       }
       return data;
@@ -1269,18 +1301,35 @@ function BacktestTab() {
       </div>
 
       {/* Running indicator — reassures user the task is in flight and
-          survives refresh (task_id persists to localStorage). */}
+          survives refresh (task_id persists to localStorage). Also
+          exposes a manual clear so a genuinely-stuck task can be
+          abandoned without waiting for the 6-min auto-clear. */}
       {isRunning && (
         <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 px-4 py-3 text-sm text-blue-300">
-          <div className="flex items-center gap-2">
-            <div className="h-2 w-2 rounded-full bg-blue-400 animate-pulse" />
-            <span>
-              Backtest running in background. Safe to refresh or navigate away —
-              results will appear here when done (polling every 2s).
-            </span>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="h-2 w-2 rounded-full bg-blue-400 animate-pulse shrink-0" />
+              <span>
+                Backtest running in background. Safe to refresh or navigate away —
+                results will appear here when done (polling every 2s).
+              </span>
+            </div>
+            <button
+              onClick={() => setTaskId(null)}
+              className="shrink-0 px-2 py-1 rounded text-xs font-medium border border-blue-500/40 hover:bg-blue-500/10"
+            >
+              Clear
+            </button>
           </div>
           {taskId && (
-            <div className="mt-1 text-xs text-blue-400/70 font-mono">task {taskId.slice(0, 8)}</div>
+            <div className="mt-1 text-xs text-blue-400/70 font-mono">
+              task {taskId.slice(0, 8)}
+              {dispatchedAt != null && (
+                <span className="ml-2 text-blue-400/50">
+                  — running {Math.max(0, Math.floor((Date.now() - dispatchedAt) / 1000))}s
+                </span>
+              )}
+            </div>
           )}
         </div>
       )}

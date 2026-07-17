@@ -40,7 +40,11 @@ services:
     build:
       context: ./backend
     restart: unless-stopped
-    mem_limit: 900m
+    # Bumped from 900m: a fundamental backtest loads all signal_outcomes
+    # plus a SPY history DataFrame into memory and briefly spiked past
+    # 900m, tripping the OOM killer and losing the in-flight task.
+    # 1400m leaves ~300m headroom on top of a busy backtest.
+    mem_limit: 1400m
     environment:
       COMMAND: worker  # entrypoint switches on this — without it, container runs uvicorn instead
       DATABASE_URL: postgresql+asyncpg://jarvis:jarvis_dev@postgres:5432/jarvis

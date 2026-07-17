@@ -15,6 +15,8 @@ restarts on its own without affecting the API.
 import asyncio
 import logging
 
+from celery.exceptions import SoftTimeLimitExceeded
+
 from app.database import AsyncSessionLocal
 from app.models.signal import SignalDirection, SignalType
 from app.services.backtest import BacktestService
@@ -23,7 +25,19 @@ from app.workers.celery_app import celery_app
 log = logging.getLogger(__name__)
 
 
-@celery_app.task(name="app.workers.tasks.backtest.run_backtest_task", bind=True)
+# Time limits: any single backtest that hasn't produced a result in
+# 5 minutes is almost certainly wedged (usually a yfinance benchmark
+# fetch that Yahoo has stopped responding to). soft_time_limit raises
+# SoftTimeLimitExceeded inside the task so we can catch it cleanly;
+# time_limit is the hard SIGKILL backstop if the task ignores the
+# soft signal. Without these a stuck task holds a worker slot until
+# the container is restarted, which is what happened before.
+@celery_app.task(
+    name="app.workers.tasks.backtest.run_backtest_task",
+    bind=True,
+    soft_time_limit=240,
+    time_limit=300,
+)
 def run_backtest_task(
     self,
     signal_type: str | None = None,
@@ -36,16 +50,27 @@ def run_backtest_task(
     """Wrapper around BacktestService.simulate. Enum values are passed
     as their string .value so Celery can JSON-serialise them; we rehydrate
     to the Enum types below since the service signature expects them."""
-    return asyncio.run(
-        _run(
-            signal_type=signal_type,
-            direction=direction,
-            min_strength=min_strength,
-            hold_period=hold_period,
-            capital_per_trade=capital_per_trade,
-            ticker=ticker,
+    try:
+        return asyncio.run(
+            _run(
+                signal_type=signal_type,
+                direction=direction,
+                min_strength=min_strength,
+                hold_period=hold_period,
+                capital_per_trade=capital_per_trade,
+                ticker=ticker,
+            )
         )
-    )
+    except SoftTimeLimitExceeded:
+        # Hit the 4-min soft cap — usually a yfinance benchmark fetch
+        # that Yahoo has stopped responding to. Raise as a FAILURE so
+        # the API's polling endpoint surfaces a clear error to the UI.
+        log.warning("Backtest task exceeded soft time limit (240s)")
+        raise RuntimeError(
+            "Backtest timed out after 4 minutes — likely a slow "
+            "external data fetch. Try a narrower filter (specific "
+            "signal_type or ticker)."
+        )
 
 
 async def _run(
