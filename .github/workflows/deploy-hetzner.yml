@@ -102,11 +102,23 @@ jobs:
             docker run --rm --network jarvis_default --env-file backend/.env \
               ghcr.io/stoufeeq/jarvis-backend:latest alembic upgrade head
 
-            # Restart backend services using compose override.
-            # GIT_SHA is exported into the env so the running containers can
-            # report it from the health endpoint.
+            # Restart application containers using compose override.
+            # --force-recreate is required so a fresh :latest image tag with
+            # changed contents actually replaces the running container
+            # (compose otherwise compares only the service spec, not image
+            # bytes). GIT_SHA is exported into the env so the running
+            # containers can report it from the health endpoint.
             export GIT_SHA="$GIT_SHA"
             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate backend celery_worker celery_beat
+
+            # Reconcile infra containers (redis, postgres, flower) with the
+            # current compose spec. Without --force-recreate, compose is a
+            # no-op if the spec is unchanged and only recreates when it
+            # genuinely changed (mem_limit bump, env var change, etc.).
+            # Without this step, edits to those services' compose config
+            # never actually reach production — you had to SSH in and
+            # `up -d --force-recreate redis` by hand.
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d postgres redis flower
 
             # Restart frontend (pass GIT_SHA for Sentry release tagging if enabled)
             docker stop jarvis-frontend 2>/dev/null || true
