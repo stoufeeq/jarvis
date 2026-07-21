@@ -104,6 +104,14 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.auto_trader.daily_exit_sweep",
         "schedule": crontab(hour=22, minute=15),  # 15min after signal outcome sweep
     },
+    # Auto-trader: stop-loss check every 15 min. Only fires when a
+    # strategy has stop_loss_pct set and a position breaches it — no-op
+    # otherwise, so cheap to run frequently. Uses Position.current_price
+    # cached by refresh_all_positions (also every 5 min).
+    "auto-trader-stop-loss-sweep": {
+        "task": "app.workers.tasks.auto_trader.stop_loss_sweep",
+        "schedule": 900,  # 15 min
+    },
     # Market snapshot for AI advisor grounding — every 4 hours at :15.
     # Indices, commodities, crypto, forex, sectors, movers, headlines,
     # macro events. Old rows pruned on each run (>7 days).

@@ -53,6 +53,7 @@ class StrategyExitReason(str, enum.Enum):
     planned = "planned"               # planned_exit_at reached
     opposite_signal = "opposite_signal"  # opposing direction signal fired
     max_hold = "max_hold"             # max_hold_days ceiling hit
+    stop_loss = "stop_loss"           # unrealised P&L breached strategy.stop_loss_pct
     panic_close = "panic_close"       # user clicked "panic close all"
     manual = "manual"                 # closed by user manually
 
@@ -95,6 +96,10 @@ class Strategy(TimestampMixin, Base):
     )
     # Optional comma-separated ticker whitelist. Empty = any ticker.
     tickers: Mapped[str | None] = mapped_column(String(2000))
+    # Optional comma-separated ticker blacklist. Any ticker in this list
+    # is skipped even if whitelisted or signal-matched. Useful for
+    # excluding consistent losers surfaced by the analysis script.
+    excluded_tickers: Mapped[str | None] = mapped_column(String(2000), nullable=True)
 
     # ── Allocation rules ────────────────────────────────────────────────
     allocation_mode: Mapped[AllocationMode] = mapped_column(
@@ -111,11 +116,20 @@ class Strategy(TimestampMixin, Base):
     # ── Hold period (days) ──────────────────────────────────────────────
     min_hold_days: Mapped[int] = mapped_column(SmallInteger, default=1, nullable=False)
     base_hold_days: Mapped[int] = mapped_column(SmallInteger, default=5, nullable=False)
-    max_hold_days: Mapped[int] = mapped_column(SmallInteger, default=30, nullable=False)
+    # Lowered from 30 → 10 (2026-07-21). The paper-trade analysis showed
+    # positions held to the 30-day ceiling had a 29% hit rate and PF 0.34
+    # — a trade that goes bad usually stays bad, and 30 days just amplified
+    # the drawdown. Existing strategies keep their configured value.
+    max_hold_days: Mapped[int] = mapped_column(SmallInteger, default=10, nullable=False)
 
     # ── Dynamic exit behaviour ──────────────────────────────────────────
     exit_on_opposite_signal: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     extend_on_continuing_signal: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Stop-loss as a signed percent (e.g. -8.0 means "exit when unrealised
+    # P&L <= -8%"). NULL = no stop-loss (legacy behaviour). Expressed as a
+    # NEGATIVE number for long positions; the auto-trader compares
+    # unrealised_pnl_pct to this value.
+    stop_loss_pct: Mapped[float | None] = mapped_column(Numeric(6, 2), nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
@@ -156,6 +170,15 @@ class StrategyTrade(TimestampMixin, Base):
     trigger_signal_id: Mapped[int | None] = mapped_column(
         ForeignKey("signals.id", ondelete="SET NULL"), nullable=True
     )
+    # Snapshot of the trigger signal at trade-creation time. Populated by
+    # auto_trader; survives rescans that wipe the signals table (which
+    # would otherwise NULL trigger_signal_id and destroy the analytical
+    # link). Nullable because pre-migration rows have no snapshot.
+    trigger_signal_type: Mapped["SignalType | None"] = mapped_column(
+        Enum(SignalType, name="signal_type"), nullable=True
+    )
+    trigger_signal_strength: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    trigger_signal_rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Snapshot of entry price + quantity so we don't depend on Trade row's
     # availability (it'll always exist but indexing for analytics is easier).

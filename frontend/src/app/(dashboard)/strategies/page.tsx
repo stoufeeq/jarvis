@@ -36,15 +36,21 @@ const DEFAULT_CREATE = {
   min_strength: 4,
   signal_type_strength_overrides: { ...EMPTY_OVERRIDES } as StrengthOverrideMap,
   tickers: "",
+  excluded_tickers: "",
   allocation_mode: "fixed" as "fixed" | "percent",
   allocation_value: 2000,
   max_position_pct: 10,
   min_cash_reserve: 5000,
   min_hold_days: 1,
   base_hold_days: 5,
-  max_hold_days: 30,
+  // Lowered default 30 → 10 based on paper-trade analysis (long holds
+  // consistently amplified losses). Existing strategies keep their
+  // configured value; edit in the form below to lower.
+  max_hold_days: 10,
   exit_on_opposite_signal: true,
   extend_on_continuing_signal: true,
+  // Signed % (negative = long stop-loss); null = disabled.
+  stop_loss_pct: -8 as number | null,
 };
 
 export default function StrategiesPage() {
@@ -288,8 +294,15 @@ function StrategyDetail({ strategy: s }: { strategy: Strategy }) {
         <DetailField label="Max per ticker" value={`${s.max_position_pct}%`} />
         <DetailField label="Min cash reserve" value={formatCurrency(s.min_cash_reserve, "USD")} />
         <DetailField label="Hold (min/base/max)" value={`${s.min_hold_days}d / ${s.base_hold_days}d / ${s.max_hold_days}d`} />
+        <DetailField
+          label="Stop-loss"
+          value={s.stop_loss_pct != null ? `${s.stop_loss_pct}%` : "off"}
+        />
         <DetailField label="Exit on opposite signal" value={s.exit_on_opposite_signal ? "Yes" : "No"} />
         <DetailField label="Extend on same signal" value={s.extend_on_continuing_signal ? "Yes" : "No"} />
+        {s.excluded_tickers && (
+          <DetailField label="Excluded tickers" value={s.excluded_tickers} />
+        )}
       </div>
 
       {/* Trades */}
@@ -384,6 +397,7 @@ function CreateStrategyModal({
         portfolio_id: portfolioId,
         description: form.description.trim() || null,
         tickers: form.tickers.trim() || null,
+        excluded_tickers: form.excluded_tickers.trim() || null,
         signal_type: form.signal_type || null,
         signal_type_strength_overrides: Object.keys(overrides).length ? overrides : null,
       });
@@ -505,6 +519,19 @@ function CreateStrategyModal({
                 className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm uppercase"
               />
             </Field>
+            <Field label="Exclude tickers — blacklist (comma-separated, optional)">
+              <input
+                type="text"
+                value={form.excluded_tickers}
+                onChange={(e) => update("excluded_tickers", e.target.value.toUpperCase())}
+                placeholder="APLD, SNDK, DRAM"
+                className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm uppercase"
+              />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Consistent losers surfaced by the analysis script go here.
+                Skips buys AND opposite-signal exits for these tickers.
+              </p>
+            </Field>
           </Section>
 
           <Section title="Allocation & risk">
@@ -542,6 +569,25 @@ function CreateStrategyModal({
                   onChange={(e) => update("min_cash_reserve", parseFloat(e.target.value) || 0)}
                   className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm"
                 />
+              </Field>
+              <Field label="Stop-loss % (negative, blank = off)">
+                <input
+                  type="number"
+                  value={form.stop_loss_pct ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    update("stop_loss_pct", v === "" ? null : parseFloat(v));
+                  }}
+                  step="0.5"
+                  max="0"
+                  min="-100"
+                  placeholder="e.g. -8"
+                  className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm"
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Exit when unrealised P&L% breaches this. -8 = cut at -8%.
+                  Checked every 15 min against cached prices.
+                </p>
               </Field>
             </div>
           </Section>

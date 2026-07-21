@@ -102,8 +102,15 @@ class AutoTraderService:
         return {"opened": opened, "extended": extended, "closed": closed}
 
     async def daily_exit_sweep(self) -> dict:
-        """Close positions whose planned_exit_at has passed (respecting
-        min_hold_days) OR whose age >= max_hold_days."""
+        """Close positions whose unrealised P&L breached stop_loss_pct,
+        whose planned_exit_at has passed (respecting min_hold_days), OR
+        whose age >= max_hold_days.
+
+        Stop-loss is checked FIRST because it bypasses min_hold_days —
+        a big adverse move on day 1 shouldn't be held to day min_hold
+        just to satisfy the minimum. The whole point of a stop is to
+        cap the loss.
+        """
         now = datetime.now(UTC)
         result = await self.db.execute(
             select(StrategyTrade, Strategy).join(Strategy, StrategyTrade.strategy_id == Strategy.id)
@@ -111,28 +118,95 @@ class AutoTraderService:
         )
         rows = result.all()
 
-        planned_closed = max_hold_closed = errors = 0
+        stop_closed = planned_closed = max_hold_closed = errors = 0
         for st, strat in rows:
+            # 1. Stop-loss (bypasses min_hold_days by design)
+            if await self._check_and_stop_loss(st, strat):
+                stop_closed += 1
+                continue
+
             age_days = (now - st.entry_at).days
 
-            # Respect minimum hold — even if planned_exit is past, wait
+            # 2. Respect minimum hold — even if planned_exit is past, wait
             if age_days < strat.min_hold_days:
                 continue
 
-            # Hard ceiling: max_hold_days
+            # 3. Hard ceiling: max_hold_days
             if age_days >= strat.max_hold_days:
                 ok = await self._close_position(st, strat, StrategyExitReason.max_hold)
                 if ok: max_hold_closed += 1
                 else: errors += 1
                 continue
 
-            # Planned exit reached
+            # 4. Planned exit reached
             if st.planned_exit_at <= now:
                 ok = await self._close_position(st, strat, StrategyExitReason.planned)
                 if ok: planned_closed += 1
                 else: errors += 1
 
-        return {"planned_closed": planned_closed, "max_hold_closed": max_hold_closed, "errors": errors}
+        return {
+            "stop_loss_closed": stop_closed,
+            "planned_closed": planned_closed,
+            "max_hold_closed": max_hold_closed,
+            "errors": errors,
+        }
+
+    async def stop_loss_sweep(self) -> dict:
+        """Check only stop-loss exits — safe to run on a short cadence
+        (every 15-30 min) so a fast adverse move gets cut before the
+        daily sweep. Ignores planned/max_hold logic to keep it cheap."""
+        result = await self.db.execute(
+            select(StrategyTrade, Strategy).join(Strategy, StrategyTrade.strategy_id == Strategy.id)
+            .where(StrategyTrade.status == StrategyTradeStatus.open)
+        )
+        rows = result.all()
+        closed = 0
+        for st, strat in rows:
+            if await self._check_and_stop_loss(st, strat):
+                closed += 1
+        return {"stop_loss_closed": closed}
+
+    async def _check_and_stop_loss(self, st: StrategyTrade, strat: Strategy) -> bool:
+        """If strat has a stop_loss_pct configured and the position's
+        unrealised P&L% breaches it, close and return True. Otherwise
+        return False.
+
+        Uses the cached Position.current_price so we don't add a live
+        yfinance call per open trade. Position prices are refreshed by
+        the market_data.refresh_all_positions Celery task every 5 min,
+        which is fresh enough for a stop-loss check.
+        """
+        if strat.stop_loss_pct is None:
+            return False
+
+        pos_result = await self.db.execute(
+            select(Position).where(
+                Position.portfolio_id == strat.portfolio_id,
+                Position.ticker == st.ticker,
+            )
+        )
+        pos = pos_result.scalar_one_or_none()
+        if pos is None or pos.current_price is None:
+            return False
+
+        entry = float(st.entry_price)
+        current = float(pos.current_price)
+        if entry <= 0:
+            return False
+
+        # Long-only for now (paper trading doesn't short) — P&L% is
+        # (current - entry) / entry. Bearish would flip the sign, but
+        # the auto-trader skips bearish opens today (see _open_position).
+        pnl_pct = ((current - entry) / entry) * 100
+        threshold = float(strat.stop_loss_pct)
+
+        if pnl_pct <= threshold:
+            log.info(
+                "Strategy %s: stop-loss triggered on %s — P&L %.2f%% <= %.2f%%",
+                strat.id, st.ticker, pnl_pct, threshold,
+            )
+            return await self._close_position(st, strat, StrategyExitReason.stop_loss)
+        return False
 
     async def panic_close_all(self, strategy_id: int) -> int:
         """User-triggered: close every open position in a strategy at market.
@@ -247,6 +321,18 @@ class AutoTraderService:
         if strategy.tickers:
             allowed = {t.strip().upper() for t in strategy.tickers.split(",") if t.strip()}
             if signal.ticker.upper() not in allowed:
+                return None
+
+        # Blacklist filter — blocks buys AND opposite-signal-driven exits
+        # for excluded tickers. If a ticker is on the blacklist mid-hold
+        # (rare), the daily sweep + stop-loss still exit normally.
+        if strategy.excluded_tickers:
+            excluded = {
+                t.strip().upper()
+                for t in strategy.excluded_tickers.split(",")
+                if t.strip()
+            }
+            if signal.ticker.upper() in excluded:
                 return None
 
         verdict = await self._consolidated_verdict(strategy, signal.ticker)
@@ -390,6 +476,13 @@ class AutoTraderService:
             direction=signal.direction,
             buy_trade_id=buy_trade.id,
             trigger_signal_id=signal.id,
+            # Snapshot the trigger signal's classification now — the FK
+            # gets NULLed within ~15 min when the next scan deletes and
+            # re-writes signals. Without these snapshot fields, post-hoc
+            # analysis has no idea which signal type drove which trade.
+            trigger_signal_type=signal.signal_type,
+            trigger_signal_strength=signal.strength,
+            trigger_signal_rationale=signal.rationale,
             entry_price=Decimal(str(price)),
             quantity=Decimal(str(qty)),
             entry_at=now,

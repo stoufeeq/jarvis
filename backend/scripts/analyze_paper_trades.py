@@ -21,7 +21,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from statistics import median
-from typing import Iterable
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -31,7 +30,6 @@ sys.path.insert(0, "/app")  # match the container's working dir if run elsewhere
 from app.database import AsyncSessionLocal
 from app.models.signal import Signal, SignalType, SignalDirection
 from app.models.strategy import (
-    Strategy,
     StrategyTrade,
     StrategyTradeStatus,
     StrategyExitReason,
@@ -80,32 +78,44 @@ def _pnl(entry: float, exit_: float, qty: float, direction: SignalDirection) -> 
 
 
 async def load_closed_trades() -> list[ClosedTrade]:
+    """Prefer the snapshot fields on StrategyTrade (introduced 2026-07-21)
+    since they survive signal rescans. Fall back to joining Signal via
+    trigger_signal_id for pre-snapshot rows where the FK still resolves
+    (rare — most historic FKs got NULLed within 15 min of trade creation)."""
     async with AsyncSessionLocal() as db:
-        # Left-join strategy + trigger signal so we still see trades that
-        # lost their signal FK (rescans SET NULL on signals rewrite).
         stmt = (
             select(StrategyTrade)
             .where(StrategyTrade.status == StrategyTradeStatus.closed)
-            .options(
-                selectinload(StrategyTrade.strategy),
-            )
+            .options(selectinload(StrategyTrade.strategy))
         )
         result = await db.execute(stmt)
         st_rows: list[StrategyTrade] = list(result.scalars().all())
 
-        # Pull the signals we need in one batch keyed by id.
-        signal_ids = [t.trigger_signal_id for t in st_rows if t.trigger_signal_id]
+        # Only fetch signals for rows that lack a snapshot (backward-compat).
+        needs_fallback = [
+            t.trigger_signal_id for t in st_rows
+            if t.trigger_signal_type is None and t.trigger_signal_id
+        ]
         signals_by_id: dict[int, Signal] = {}
-        if signal_ids:
-            sig_res = await db.execute(select(Signal).where(Signal.id.in_(signal_ids)))
+        if needs_fallback:
+            sig_res = await db.execute(select(Signal).where(Signal.id.in_(needs_fallback)))
             for s in sig_res.scalars().all():
                 signals_by_id[s.id] = s
 
     out: list[ClosedTrade] = []
     for t in st_rows:
         if t.exit_price is None or t.exited_at is None:
-            continue  # defensive — closed but somehow missing exit fields
-        sig = signals_by_id.get(t.trigger_signal_id) if t.trigger_signal_id else None
+            continue
+
+        # Snapshot takes precedence; fall back to live signal join.
+        sig_type = t.trigger_signal_type
+        sig_strength = t.trigger_signal_strength
+        if sig_type is None and t.trigger_signal_id:
+            sig = signals_by_id.get(t.trigger_signal_id)
+            if sig:
+                sig_type = sig.signal_type
+                sig_strength = sig.strength
+
         entry = float(t.entry_price)
         exit_ = float(t.exit_price)
         qty = float(t.quantity)
@@ -115,8 +125,8 @@ async def load_closed_trades() -> list[ClosedTrade]:
                 ticker=t.ticker,
                 strategy_name=t.strategy.name if t.strategy else "?",
                 direction=t.direction,
-                signal_type=sig.signal_type if sig else None,
-                signal_strength=sig.strength if sig else None,
+                signal_type=sig_type,
+                signal_strength=sig_strength,
                 entry_price=entry,
                 exit_price=exit_,
                 quantity=qty,

@@ -42,6 +42,7 @@ class StrategyCreate(BaseModel):
     min_strength: int = Field(default=4, ge=1, le=5)
     signal_type_strength_overrides: dict[str, int] | None = None
     tickers: str | None = None  # comma-separated whitelist
+    excluded_tickers: str | None = None  # comma-separated blacklist
 
     allocation_mode: AllocationMode = AllocationMode.fixed
     allocation_value: float = Field(default=2000, gt=0)
@@ -51,10 +52,15 @@ class StrategyCreate(BaseModel):
 
     min_hold_days: int = Field(default=1, ge=0, le=365)
     base_hold_days: int = Field(default=5, ge=1, le=365)
-    max_hold_days: int = Field(default=30, ge=1, le=365)
+    # Default lowered 30→10 (2026-07-21) based on paper-trade analysis:
+    # positions held to the 30-day ceiling had 29% hit rate, PF 0.34.
+    max_hold_days: int = Field(default=10, ge=1, le=365)
 
     exit_on_opposite_signal: bool = True
     extend_on_continuing_signal: bool = True
+    # Stop-loss as a signed percent (negative for long positions).
+    # e.g. -8.0 = exit when unrealised P&L% <= -8%. None = disabled.
+    stop_loss_pct: float | None = Field(default=None, ge=-100, le=0)
 
     is_active: bool = True
 
@@ -69,6 +75,7 @@ class StrategyUpdate(BaseModel):
     min_strength: int | None = None
     signal_type_strength_overrides: dict[str, int] | None = None
     tickers: str | None = None
+    excluded_tickers: str | None = None
 
     allocation_mode: AllocationMode | None = None
     allocation_value: float | None = None
@@ -82,6 +89,7 @@ class StrategyUpdate(BaseModel):
 
     exit_on_opposite_signal: bool | None = None
     extend_on_continuing_signal: bool | None = None
+    stop_loss_pct: float | None = Field(default=None, ge=-100, le=0)
 
     is_active: bool | None = None
 
@@ -100,6 +108,7 @@ class StrategyRead(BaseModel):
     min_strength: int
     signal_type_strength_overrides: dict[str, int] | None = None
     tickers: str | None
+    excluded_tickers: str | None = None
 
     allocation_mode: AllocationMode
     allocation_value: float
@@ -113,6 +122,7 @@ class StrategyRead(BaseModel):
 
     exit_on_opposite_signal: bool
     extend_on_continuing_signal: bool
+    stop_loss_pct: float | None = None
 
     is_active: bool
     created_at: datetime
@@ -129,6 +139,10 @@ class StrategyTradeRead(BaseModel):
     buy_trade_id: int | None
     sell_trade_id: int | None
     trigger_signal_id: int | None
+    # Signal metadata snapshotted at trade creation — survives rescans
+    # that wipe the FK. Nullable for pre-migration rows.
+    trigger_signal_type: SignalType | None = None
+    trigger_signal_strength: int | None = None
 
     entry_price: float
     exit_price: float | None

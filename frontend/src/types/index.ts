@@ -497,6 +497,7 @@ export interface Strategy {
   direction: "bullish" | "bearish" | "neutral" | null;
   min_strength: number;
   tickers: string | null;
+  excluded_tickers: string | null;
   allocation_mode: AllocationMode;
   allocation_value: number;
   max_position_pct: number;
@@ -506,6 +507,7 @@ export interface Strategy {
   max_hold_days: number;
   exit_on_opposite_signal: boolean;
   extend_on_continuing_signal: boolean;
+  stop_loss_pct: number | null;
   is_active: boolean;
   created_at: string;
 }
@@ -518,6 +520,8 @@ export interface StrategyTradeDetail {
   buy_trade_id: number | null;
   sell_trade_id: number | null;
   trigger_signal_id: number | null;
+  trigger_signal_type: string | null;
+  trigger_signal_strength: number | null;
   entry_price: number;
   exit_price: number | null;
   quantity: number;
