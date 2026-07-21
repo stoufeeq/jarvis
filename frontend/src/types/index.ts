@@ -496,6 +496,7 @@ export interface Strategy {
   signal_type: string | null;
   direction: "bullish" | "bearish" | "neutral" | null;
   min_strength: number;
+  signal_type_strength_overrides: Record<string, number> | null;
   tickers: string | null;
   excluded_tickers: string | null;
   allocation_mode: AllocationMode;

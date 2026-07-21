@@ -7,7 +7,7 @@ import { TickerLink } from "@/components/ui/TickerLink";
 import { formatCurrency, formatPct, pnlColor } from "@/lib/utils";
 import type { Strategy, StrategyStats, StrategyTradeDetail, Portfolio } from "@/types";
 import toast from "react-hot-toast";
-import { Plus, Trash2, Pause, Play, AlertTriangle, X } from "lucide-react";
+import { Plus, Trash2, Pause, Play, AlertTriangle, X, Pencil } from "lucide-react";
 
 const SIGNAL_TYPES = ["technical", "insider", "ai_news", "options_flow", "fundamental", "earnings_upcoming", "macro_event", "cross_impact"];
 
@@ -56,6 +56,7 @@ const DEFAULT_CREATE = {
 export default function StrategiesPage() {
   const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
+  const [editing, setEditing] = useState<Strategy | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
   const { data: strategies = [], isLoading } = useQuery<Strategy[]>({
@@ -113,6 +114,7 @@ export default function StrategiesPage() {
             strategy={s}
             expanded={expandedId === s.id}
             onToggleExpand={() => setExpandedId((id) => (id === s.id ? null : s.id))}
+            onEdit={() => setEditing(s)}
             onChange={() => qc.invalidateQueries({ queryKey: ["strategies"] })}
           />
         ))}
@@ -129,6 +131,20 @@ export default function StrategiesPage() {
           }}
         />
       )}
+
+      {editing && paperPortfolio && (
+        <CreateStrategyModal
+          portfolioId={paperPortfolio.id}
+          existing={editing}
+          onClose={() => setEditing(null)}
+          onCreated={() => {
+            qc.invalidateQueries({ queryKey: ["strategies"] });
+            qc.invalidateQueries({ queryKey: ["strategy-stats", editing.id] });
+            setEditing(null);
+            toast.success("Strategy updated");
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -139,11 +155,13 @@ function StrategyCard({
   strategy: s,
   expanded,
   onToggleExpand,
+  onEdit,
   onChange,
 }: {
   strategy: Strategy;
   expanded: boolean;
   onToggleExpand: () => void;
+  onEdit: () => void;
   onChange: () => void;
 }) {
   const qc = useQueryClient();
@@ -224,6 +242,13 @@ function StrategyCard({
         )}
 
         <div className="flex items-center gap-1">
+          <button
+            onClick={onEdit}
+            className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+            title="Edit strategy"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
           <button
             onClick={() => togglePause.mutate()}
             disabled={togglePause.isPending}
@@ -375,38 +400,73 @@ function DetailField({ label, value }: { label: string; value: string }) {
 
 function CreateStrategyModal({
   portfolioId,
+  existing,
   onClose,
   onCreated,
 }: {
   portfolioId: number;
+  // Present → modal is in edit mode (patches this strategy); omit for create.
+  existing?: Strategy;
   onClose: () => void;
   onCreated: () => void;
 }) {
-  const [form, setForm] = useState({ ...DEFAULT_CREATE });
+  const isEdit = !!existing;
+  const [form, setForm] = useState(() => {
+    if (!existing) return { ...DEFAULT_CREATE };
+    // Rehydrate the form from the existing strategy. The override map
+    // must be a full record with all signal-type keys nulled by default,
+    // then overlaid with whatever's saved.
+    const overridesMap: StrengthOverrideMap = { ...EMPTY_OVERRIDES };
+    if (existing.signal_type_strength_overrides) {
+      for (const [k, v] of Object.entries(existing.signal_type_strength_overrides)) {
+        if (k in overridesMap) overridesMap[k as keyof StrengthOverrideMap] = v;
+      }
+    }
+    return {
+      name: existing.name,
+      description: existing.description ?? "",
+      signal_type: existing.signal_type,
+      direction: (existing.direction === "neutral" ? null : existing.direction) as "bullish" | "bearish" | null,
+      min_strength: existing.min_strength,
+      signal_type_strength_overrides: overridesMap,
+      tickers: existing.tickers ?? "",
+      excluded_tickers: existing.excluded_tickers ?? "",
+      allocation_mode: existing.allocation_mode as "fixed" | "percent",
+      allocation_value: Number(existing.allocation_value),
+      max_position_pct: Number(existing.max_position_pct),
+      min_cash_reserve: Number(existing.min_cash_reserve),
+      min_hold_days: existing.min_hold_days,
+      base_hold_days: existing.base_hold_days,
+      max_hold_days: existing.max_hold_days,
+      exit_on_opposite_signal: existing.exit_on_opposite_signal,
+      extend_on_continuing_signal: existing.extend_on_continuing_signal,
+      stop_loss_pct: existing.stop_loss_pct,
+    };
+  });
 
-  const create = useMutation({
+  const save = useMutation({
     mutationFn: () => {
-      // Drop null entries from the override map; send null when nothing's set
-      // so the backend treats the strategy as "use global min_strength only".
       const overrides: Record<string, number> = {};
       for (const [k, v] of Object.entries(form.signal_type_strength_overrides)) {
         if (typeof v === "number") overrides[k] = v;
       }
-      return strategiesApi.create({
+      const payload = {
         ...form,
-        portfolio_id: portfolioId,
         description: form.description.trim() || null,
         tickers: form.tickers.trim() || null,
         excluded_tickers: form.excluded_tickers.trim() || null,
         signal_type: form.signal_type || null,
         signal_type_strength_overrides: Object.keys(overrides).length ? overrides : null,
-      });
+      };
+      return isEdit
+        ? strategiesApi.update(existing!.id, payload)
+        : strategiesApi.create({ ...payload, portfolio_id: portfolioId });
     },
     onSuccess: () => onCreated(),
     onError: (err: unknown) => {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-        ?? "Failed to create strategy";
-      toast.error(typeof msg === "string" ? msg : "Failed to create strategy");
+        ?? (isEdit ? "Failed to update strategy" : "Failed to create strategy");
+      toast.error(typeof msg === "string" ? msg : (isEdit ? "Failed to update strategy" : "Failed to create strategy"));
     },
   });
 
@@ -421,7 +481,7 @@ function CreateStrategyModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-border">
-          <h2 className="font-semibold">New Strategy</h2>
+          <h2 className="font-semibold">{isEdit ? "Edit Strategy" : "New Strategy"}</h2>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
             <X className="w-4 h-4" />
           </button>
@@ -653,11 +713,11 @@ function CreateStrategyModal({
             Cancel
           </button>
           <button
-            onClick={() => create.mutate()}
-            disabled={!form.name.trim() || create.isPending}
+            onClick={() => save.mutate()}
+            disabled={!form.name.trim() || save.isPending}
             className="px-4 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50"
           >
-            {create.isPending ? "Creating…" : "Create Strategy"}
+            {save.isPending ? "Saving…" : (isEdit ? "Save changes" : "Create Strategy")}
           </button>
         </div>
       </div>
