@@ -211,6 +211,23 @@ def report_overall(trades: list[ClosedTrade]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def report_by_strategy(trades: list[ClosedTrade]) -> str:
+    """Cross-strategy comparison — the point of running multiple paper
+    portfolios in parallel. Sorted by total P&L descending."""
+    buckets: dict[str, list[ClosedTrade]] = defaultdict(list)
+    for t in trades:
+        buckets[t.strategy_name].append(t)
+    if len(buckets) <= 1:
+        return ""  # nothing to compare
+    lines = [_header("BY STRATEGY (parallel A/B comparison)")]
+    lines.append("")
+    ordered = sorted(buckets.items(), key=lambda kv: -_summarise(kv[1])["total_pnl"])
+    for name, group in ordered:
+        s = _summarise(group)
+        lines.append(_fmt_bucket_line(name, s, width=28))
+    return "\n".join(lines) + "\n"
+
+
 def report_by_signal_type(trades: list[ClosedTrade]) -> str:
     buckets: dict[str, list[ClosedTrade]] = defaultdict(list)
     for t in trades:
@@ -370,6 +387,9 @@ async def main():
         return
 
     print(report_overall(trades))
+    per_strategy = report_by_strategy(trades)
+    if per_strategy:
+        print(per_strategy)
     print(report_by_signal_type(trades))
     print(report_by_signal_type_and_strength(trades))
     print(report_by_exit_reason(trades))

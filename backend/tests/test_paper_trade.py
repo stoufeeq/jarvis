@@ -56,12 +56,21 @@ async def test_create_paper_portfolio_custom_initial_cash(db):
 
 
 @pytest.mark.asyncio
-async def test_cannot_create_two_paper_portfolios(db):
+async def test_can_create_multiple_paper_portfolios(db):
+    """Multiple paper portfolios per user are supported so users can run
+    strategies in parallel with isolated cash + trade histories. The
+    original single-portfolio cap was removed 2026-07-21."""
     svc = PortfolioService(db)
-    await svc.create(1, PortfolioCreate(name="Paper 1", broker=BrokerType.paper))
+    p1 = await svc.create(1, PortfolioCreate(name="Paper A", broker=BrokerType.paper))
+    p2 = await svc.create(1, PortfolioCreate(
+        name="Paper B", broker=BrokerType.paper, initial_cash=50_000,
+    ))
     await db.commit()
-    with pytest.raises(ValueError, match="already exists"):
-        await svc.create(1, PortfolioCreate(name="Paper 2", broker=BrokerType.paper))
+    assert p1.id != p2.id
+    assert p1.broker == BrokerType.paper and p2.broker == BrokerType.paper
+    # Each portfolio keeps its own cash pool.
+    assert p1.cash_balance is not None and float(p1.cash_balance) == 100_000.0
+    assert p2.cash_balance is not None and float(p2.cash_balance) == 50_000.0
 
 
 @pytest.mark.asyncio

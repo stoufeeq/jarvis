@@ -69,7 +69,13 @@ export default function StrategiesPage() {
     queryKey: ["portfolios"],
     queryFn: () => portfolioApi.list().then((r) => r.data),
   });
-  const paperPortfolio = portfolios.find((p) => p.broker === "paper");
+  // All active paper portfolios — one strategy per portfolio is the
+  // recommended pattern for parallel A/B testing since each has its
+  // own cash pool and Position table.
+  const paperPortfolios = portfolios.filter((p) => p.broker === "paper" && p.is_active);
+  const hasPaper = paperPortfolios.length > 0;
+  // Quick lookup for the card summary.
+  const portfolioById = new Map(portfolios.map((p) => [p.id, p]));
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -82,15 +88,15 @@ export default function StrategiesPage() {
         </div>
         <button
           onClick={() => setShowCreate(true)}
-          disabled={!paperPortfolio}
+          disabled={!hasPaper}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50"
-          title={!paperPortfolio ? "Create a paper portfolio first (toggle Paper mode in header)" : "Create strategy"}
+          title={!hasPaper ? "Create a paper portfolio first (toggle Paper mode in header)" : "Create strategy"}
         >
           <Plus className="w-3.5 h-3.5" /> New Strategy
         </button>
       </div>
 
-      {!paperPortfolio && (
+      {!hasPaper && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
           <p className="text-amber-500 font-medium">No paper portfolio yet</p>
           <p className="text-muted-foreground mt-1">
@@ -101,7 +107,7 @@ export default function StrategiesPage() {
 
       {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
 
-      {!isLoading && strategies.length === 0 && paperPortfolio && (
+      {!isLoading && strategies.length === 0 && hasPaper && (
         <div className="rounded-xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
           No strategies yet. Click <strong>New Strategy</strong> to create one.
         </div>
@@ -112,6 +118,7 @@ export default function StrategiesPage() {
           <StrategyCard
             key={s.id}
             strategy={s}
+            portfolioName={portfolioById.get(s.portfolio_id)?.name ?? "?"}
             expanded={expandedId === s.id}
             onToggleExpand={() => setExpandedId((id) => (id === s.id ? null : s.id))}
             onEdit={() => setEditing(s)}
@@ -120,9 +127,9 @@ export default function StrategiesPage() {
         ))}
       </div>
 
-      {showCreate && paperPortfolio && (
+      {showCreate && hasPaper && (
         <CreateStrategyModal
-          portfolioId={paperPortfolio.id}
+          paperPortfolios={paperPortfolios}
           onClose={() => setShowCreate(false)}
           onCreated={() => {
             qc.invalidateQueries({ queryKey: ["strategies"] });
@@ -132,9 +139,9 @@ export default function StrategiesPage() {
         />
       )}
 
-      {editing && paperPortfolio && (
+      {editing && hasPaper && (
         <CreateStrategyModal
-          portfolioId={paperPortfolio.id}
+          paperPortfolios={paperPortfolios}
           existing={editing}
           onClose={() => setEditing(null)}
           onCreated={() => {
@@ -153,12 +160,14 @@ export default function StrategiesPage() {
 
 function StrategyCard({
   strategy: s,
+  portfolioName,
   expanded,
   onToggleExpand,
   onEdit,
   onChange,
 }: {
   strategy: Strategy;
+  portfolioName: string;
   expanded: boolean;
   onToggleExpand: () => void;
   onEdit: () => void;
@@ -223,7 +232,11 @@ function StrategyCard({
               </span>
             )}
           </div>
-          <p className="text-xs text-muted-foreground mt-0.5">{filterSummary}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            <span className="text-foreground/70">→ {portfolioName}</span>
+            {" · "}
+            {filterSummary}
+          </p>
         </button>
 
         {stats && (
@@ -399,18 +412,24 @@ function DetailField({ label, value }: { label: string; value: string }) {
 /* ── Create strategy modal ─────────────────────────────────────────── */
 
 function CreateStrategyModal({
-  portfolioId,
+  paperPortfolios,
   existing,
   onClose,
   onCreated,
 }: {
-  portfolioId: number;
-  // Present → modal is in edit mode (patches this strategy); omit for create.
+  // Every active paper portfolio the strategy can be attached to.
+  // In create mode the user picks one; in edit mode the target is
+  // fixed to the strategy's existing portfolio.
+  paperPortfolios: Portfolio[];
   existing?: Strategy;
   onClose: () => void;
   onCreated: () => void;
 }) {
   const isEdit = !!existing;
+  // Default create-mode target: first paper portfolio; user can change.
+  const [portfolioId, setPortfolioId] = useState<number>(
+    existing?.portfolio_id ?? paperPortfolios[0]?.id ?? 0,
+  );
   const [form, setForm] = useState(() => {
     if (!existing) return { ...DEFAULT_CREATE };
     // Rehydrate the form from the existing strategy. The override map
@@ -487,6 +506,33 @@ function CreateStrategyModal({
           </button>
         </div>
         <div className="p-5 space-y-4">
+          <Field
+            label={isEdit ? "Paper portfolio (locked)" : "Paper portfolio"}
+            required
+          >
+            <select
+              value={portfolioId}
+              onChange={(e) => setPortfolioId(parseInt(e.target.value))}
+              disabled={isEdit}
+              className="w-full px-3 py-2 rounded-md border border-border bg-input text-sm disabled:opacity-60"
+            >
+              {paperPortfolios.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            {!isEdit && paperPortfolios.length === 1 && (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Create additional paper portfolios on the Portfolio page to run
+                strategies in parallel with isolated equity curves.
+              </p>
+            )}
+            {isEdit && (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                A strategy's portfolio is fixed after creation. Delete and
+                recreate to move it (open positions must be closed first).
+              </p>
+            )}
+          </Field>
           <Field label="Name" required>
             <input
               type="text"

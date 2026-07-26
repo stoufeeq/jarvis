@@ -45,18 +45,12 @@ class PortfolioService:
         return list(result.scalars().all())
 
     async def create(self, user_id: int, payload: PortfolioCreate) -> Portfolio:
-        # For paper portfolios: enforce single per user, default cash to $100k
         if payload.broker == BrokerType.paper:
-            existing = await self.db.execute(
-                select(Portfolio).where(
-                    Portfolio.user_id == user_id,
-                    Portfolio.broker == BrokerType.paper,
-                    Portfolio.is_active.is_(True),
-                )
-            )
-            if existing.scalar_one_or_none() is not None:
-                raise ValueError("A paper portfolio already exists for this user")
-
+            # Multiple paper portfolios are allowed — each acts as an
+            # isolated sandbox with its own virtual cash + trade history,
+            # so users can run several strategies in parallel without
+            # commingling their equity curves. Default cash $100k when
+            # not specified.
             initial = payload.initial_cash if payload.initial_cash and payload.initial_cash > 0 else 100_000.0
             p = Portfolio(
                 user_id=user_id,

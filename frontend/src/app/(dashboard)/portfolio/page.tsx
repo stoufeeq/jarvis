@@ -175,14 +175,36 @@ export default function PortfolioPage() {
     onError: () => toast.error("Failed to update portfolio"),
   });
 
+  // In paper mode the "New Portfolio" form creates another paper
+  // portfolio (multiples are allowed now — one strategy per portfolio
+  // for parallel A/B testing). In real mode it creates a manual one.
+  const [newInitialCash, setNewInitialCash] = useState("100000");
   const createMutation = useMutation({
-    mutationFn: () => portfolioApi.create({ name: newName.trim(), currency: newCurrency.trim().toUpperCase() || "USD" }),
+    mutationFn: () => {
+      const base = {
+        name: newName.trim(),
+        currency: newCurrency.trim().toUpperCase() || "USD",
+      };
+      return tradingMode === "paper"
+        ? portfolioApi.create({
+            ...base,
+            broker: "paper",
+            initial_cash: parseFloat(newInitialCash) || 100_000,
+          })
+        : portfolioApi.create(base);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["portfolios"] });
       setShowCreate(false);
       setNewName("");
       setNewCurrency("USD");
+      setNewInitialCash("100000");
       toast.success("Portfolio created");
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        ?? "Failed to create portfolio";
+      toast.error(typeof msg === "string" ? msg : "Failed to create portfolio");
     },
   });
 
@@ -420,7 +442,9 @@ export default function PortfolioPage() {
       {/* Create portfolio form */}
       {showCreate && (
         <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-          <h2 className="text-sm font-semibold">New Portfolio</h2>
+          <h2 className="text-sm font-semibold">
+            {isPaper ? "New Paper Portfolio" : "New Portfolio"}
+          </h2>
           <div className="flex flex-wrap gap-3 items-end">
             <div className="space-y-1">
               <label className="text-xs text-muted-foreground">Name *</label>
@@ -428,7 +452,7 @@ export default function PortfolioPage() {
                 autoFocus
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                placeholder="e.g. Growth Portfolio"
+                placeholder={isPaper ? "e.g. Technical-Only Sandbox" : "e.g. Growth Portfolio"}
                 className="px-3 py-2 rounded-md border border-border bg-input text-sm w-56 focus:outline-none focus:ring-2 focus:ring-ring"
                 onKeyDown={(e) => e.key === "Enter" && newName.trim() && createMutation.mutate()}
               />
@@ -452,6 +476,19 @@ export default function PortfolioPage() {
                 <option value="INR">INR — Indian Rupee</option>
               </select>
             </div>
+            {isPaper && (
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">Initial cash</label>
+                <input
+                  type="number"
+                  value={newInitialCash}
+                  onChange={(e) => setNewInitialCash(e.target.value)}
+                  min="0"
+                  step="1000"
+                  className="px-3 py-2 rounded-md border border-border bg-input text-sm w-32 focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+            )}
             <div className="flex gap-2">
               <button
                 onClick={() => createMutation.mutate()}
@@ -461,13 +498,20 @@ export default function PortfolioPage() {
                 {createMutation.isPending ? "Creating…" : "Create"}
               </button>
               <button
-                onClick={() => { setShowCreate(false); setNewName(""); setNewCurrency("USD"); }}
+                onClick={() => { setShowCreate(false); setNewName(""); setNewCurrency("USD"); setNewInitialCash("100000"); }}
                 className="px-4 py-2 rounded-md bg-secondary text-sm"
               >
                 Cancel
               </button>
             </div>
           </div>
+          {isPaper && (
+            <p className="text-[11px] text-muted-foreground">
+              Each paper portfolio is an isolated sandbox with its own virtual
+              cash and trade history. Create multiple to run different
+              strategies in parallel and compare their equity curves.
+            </p>
+          )}
         </div>
       )}
 
