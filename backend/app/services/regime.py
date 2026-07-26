@@ -50,6 +50,19 @@ REGIMES = (
 )
 
 
+def _normalize_index(s: pd.Series) -> pd.Series:
+    """Strip timezone and normalise to midnight so two yfinance series
+    (which may be tz-aware in different zones) align by calendar date
+    rather than by wall-clock nanosecond. Without this, DataFrame joins
+    silently fill with NaN for every row and dropna nukes everything."""
+    idx = pd.to_datetime(s.index)
+    if getattr(idx, "tz", None) is not None:
+        idx = idx.tz_convert("UTC").tz_localize(None)
+    s = s.copy()
+    s.index = idx.normalize()
+    return s
+
+
 def classify(spx_close: float, spx_sma200: float, vix_close: float) -> str:
     """Deterministic 2×2 classification. Pure function — no I/O."""
     is_bull = spx_close > spx_sma200
@@ -143,20 +156,30 @@ class RegimeService:
             log.warning("Regime backfill: SPX or VIX unavailable — skipped")
             return 0
 
-        spx_close = spx_df["Close"].dropna()
-        vix_close = vix_df["Close"].dropna()
+        spx_close = _normalize_index(spx_df["Close"].dropna())
+        vix_close = _normalize_index(vix_df["Close"].dropna())
         sma200 = spx_close.rolling(SMA_WINDOW).mean()
 
-        # Align on shared index (trading days present in both).
+        # Align on shared index (trading days present in both). The
+        # _normalize_index above strips timezone + normalises to midnight
+        # so SPY (tz-aware in America/New_York) and ^VIX align exactly
+        # on the same date value. Without this the DataFrame constructor
+        # would treat 2025-07-24 00:00-04:00 and 2025-07-24 00:00+00:00
+        # as different index positions → NaN → dropna wipes everything.
         joined = pd.DataFrame({
             "spx": spx_close,
             "sma200": sma200,
             "vix": vix_close,
         }).dropna()
+        log.info(
+            "Regime backfill: fetched SPY=%d bars, VIX=%d bars, aligned=%d bars",
+            len(spx_close), len(vix_close), len(joined),
+        )
 
         # Cutoff: only classify dates within the requested lookback.
         cutoff = datetime.now(UTC).date() - timedelta(days=lookback_days)
         joined = joined[joined.index.date >= cutoff]  # type: ignore[union-attr]
+        log.info("Regime backfill: %d bars after %s cutoff", len(joined), cutoff)
 
         # Skip dates already in the table so a re-run is cheap.
         existing_dates_result = await self.db.execute(select(MarketRegime.date))
