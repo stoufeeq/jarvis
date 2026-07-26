@@ -28,6 +28,7 @@ from sqlalchemy.orm import selectinload
 sys.path.insert(0, "/app")  # match the container's working dir if run elsewhere
 
 from app.database import AsyncSessionLocal
+from app.models.market_regime import MarketRegime
 from app.models.signal import Signal, SignalType, SignalDirection
 from app.models.strategy import (
     StrategyTrade,
@@ -54,6 +55,7 @@ class ClosedTrade:
     exited_at: datetime
     exit_reason: StrategyExitReason | None
     pnl: float                        # $ P&L (long: exit-entry, short: entry-exit) × qty
+    entry_regime: str | None = None   # market regime on entry_at date, if known
 
     @property
     def pnl_pct(self) -> float:
@@ -102,6 +104,12 @@ async def load_closed_trades() -> list[ClosedTrade]:
             for s in sig_res.scalars().all():
                 signals_by_id[s.id] = s
 
+        # Bulk-load all regime rows into a date-indexed dict — one query
+        # covers every trade's entry date lookup below. Empty if the
+        # market_regimes table hasn't been backfilled yet.
+        regime_rows = (await db.execute(select(MarketRegime))).scalars().all()
+        regime_by_date: dict = {r.date: r.regime for r in regime_rows}
+
     out: list[ClosedTrade] = []
     for t in st_rows:
         if t.exit_price is None or t.exited_at is None:
@@ -134,6 +142,7 @@ async def load_closed_trades() -> list[ClosedTrade]:
                 exited_at=t.exited_at,
                 exit_reason=t.exit_reason,
                 pnl=_pnl(entry, exit_, qty, t.direction),
+                entry_regime=regime_by_date.get(t.entry_at.date()),
             )
         )
     return out
@@ -256,6 +265,25 @@ def report_by_signal_type_and_strength(trades: list[ClosedTrade]) -> str:
         s = _summarise(group)
         label = f"{name} · str={strength if strength is not None else '?'}"
         lines.append(_fmt_bucket_line(label, s))
+    return "\n".join(lines) + "\n"
+
+
+def report_by_regime(trades: list[ClosedTrade]) -> str:
+    """Bucket closed trades by the market regime in effect on their
+    entry date. Empty output if the market_regimes table hasn't been
+    backfilled (no entry_regime on any trade)."""
+    if not any(t.entry_regime for t in trades):
+        return ""
+    buckets: dict[str, list[ClosedTrade]] = defaultdict(list)
+    for t in trades:
+        buckets[t.entry_regime or "(no regime data)"].append(t)
+    lines = [_header("BY MARKET REGIME (at entry)")]
+    lines.append(" (which regime does this strategy actually work in?)")
+    lines.append("")
+    ordered = sorted(buckets.items(), key=lambda kv: -_summarise(kv[1])["total_pnl"])
+    for name, group in ordered:
+        s = _summarise(group)
+        lines.append(_fmt_bucket_line(name, s, width=22))
     return "\n".join(lines) + "\n"
 
 
@@ -392,6 +420,9 @@ async def main():
         print(per_strategy)
     print(report_by_signal_type(trades))
     print(report_by_signal_type_and_strength(trades))
+    per_regime = report_by_regime(trades)
+    if per_regime:
+        print(per_regime)
     print(report_by_exit_reason(trades))
     print(report_worst_tickers(trades))
     print(report_worst_trades(trades))

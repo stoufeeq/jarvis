@@ -4,6 +4,7 @@ from app.models.calendar_event import CalendarEvent
 from app.models.conversation import ChatMessage, Conversation
 from app.models.halal_compliance import HalalCompliance
 from app.models.insider_trade import InsiderTrade
+from app.models.market_regime import MarketRegime
 from app.models.market_snapshot import MarketSnapshot
 from app.models.news import NewsItem
 from app.models.password_reset_token import PasswordResetToken
@@ -33,6 +34,7 @@ __all__ = [
     "StrategyTrade",
     "HalalCompliance",
     "PasswordResetToken",
+    "MarketRegime",
     "MarketSnapshot",
     "Account",
     "AccountBalance",

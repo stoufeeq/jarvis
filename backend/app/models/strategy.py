@@ -100,6 +100,12 @@ class Strategy(TimestampMixin, Base):
     # is skipped even if whitelisted or signal-matched. Useful for
     # excluding consistent losers surfaced by the analysis script.
     excluded_tickers: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    # Comma-separated regime whitelist (see app.models.market_regime.REGIME_NAMES).
+    # NULL / empty = allow any regime (legacy behaviour). Populated
+    # values gate new opens on the current market regime — e.g. set to
+    # "bull_low_vol,bull_high_vol" to only fire bullish strategies while
+    # SPX is above its 200-SMA.
+    allowed_regimes: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     # ── Allocation rules ────────────────────────────────────────────────
     allocation_mode: Mapped[AllocationMode] = mapped_column(

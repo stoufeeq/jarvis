@@ -43,6 +43,9 @@ class StrategyCreate(BaseModel):
     signal_type_strength_overrides: dict[str, int] | None = None
     tickers: str | None = None  # comma-separated whitelist
     excluded_tickers: str | None = None  # comma-separated blacklist
+    # Comma-separated list of regime names the strategy is allowed to
+    # open new positions in. NULL / empty = no regime gate.
+    allowed_regimes: str | None = None
 
     allocation_mode: AllocationMode = AllocationMode.fixed
     allocation_value: float = Field(default=2000, gt=0)
@@ -76,6 +79,7 @@ class StrategyUpdate(BaseModel):
     signal_type_strength_overrides: dict[str, int] | None = None
     tickers: str | None = None
     excluded_tickers: str | None = None
+    allowed_regimes: str | None = None
 
     allocation_mode: AllocationMode | None = None
     allocation_value: float | None = None
@@ -109,6 +113,7 @@ class StrategyRead(BaseModel):
     signal_type_strength_overrides: dict[str, int] | None = None
     tickers: str | None
     excluded_tickers: str | None = None
+    allowed_regimes: str | None = None
 
     allocation_mode: AllocationMode
     allocation_value: float

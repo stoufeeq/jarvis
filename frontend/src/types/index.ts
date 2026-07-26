@@ -499,6 +499,7 @@ export interface Strategy {
   signal_type_strength_overrides: Record<string, number> | null;
   tickers: string | null;
   excluded_tickers: string | null;
+  allowed_regimes: string | null;
   allocation_mode: AllocationMode;
   allocation_value: number;
   max_position_pct: number;

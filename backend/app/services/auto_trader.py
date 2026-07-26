@@ -335,6 +335,32 @@ class AutoTraderService:
             if signal.ticker.upper() in excluded:
                 return None
 
+        # Regime gate — skip ONLY new opens, not exits. If the market
+        # flips to a regime this strategy doesn't trade, we still want
+        # opposite-signal exits + stop-losses to keep firing on existing
+        # positions; blocking exits by regime would trap trades. So the
+        # gate only applies when there's no open position yet.
+        if strategy.allowed_regimes:
+            allowed = {
+                r.strip()
+                for r in strategy.allowed_regimes.split(",")
+                if r.strip()
+            }
+            if allowed:
+                open_pos_check = await self._get_open_position(strategy.id, signal.ticker)
+                if open_pos_check is None:
+                    # No existing position → this signal could open one.
+                    # Look up current regime.
+                    from app.services.regime import RegimeService
+                    regime_row = await RegimeService(self.db).get_current()
+                    if regime_row and regime_row.regime not in allowed:
+                        log.info(
+                            "Strategy %s: regime %s not in allowed %s — skipping %s",
+                            strategy.id, regime_row.regime,
+                            sorted(allowed), signal.ticker,
+                        )
+                        return None
+
         verdict = await self._consolidated_verdict(strategy, signal.ticker)
         if verdict is None:
             return None

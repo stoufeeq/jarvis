@@ -334,6 +334,52 @@ class TechnicalSignalProvider(BaseSignalProvider):
                     f"Price rejected from upper Bollinger Band (${curr_upper:.2f}). Potential reversal short.",
                 ))
 
+        # ── Mean-reversion (RSI + BB + reversal candle) ───────────────────────
+        # Stricter than the standalone RSI<30 rule (which was removed as a
+        # net loser on 2026-06-03): fires only when THREE independent
+        # oversold/reversal conditions align on the same bar. Should be
+        # much rarer and higher-quality than pure momentum-extreme signals.
+        # Confluence required: RSI + Bollinger + candle direction.
+        if len(rsi.dropna()) >= 1 and len(bb_lower.dropna()) >= 1 and len(close) >= 2:
+            curr_rsi = float(rsi.iloc[-1])
+            curr_lower_bb = float(bb_lower.iloc[-1])
+            curr_upper_bb = float(bb_upper.iloc[-1])
+            prev_close_val = float(close.iloc[-2])
+            curr_open = float(df["Open"].iloc[-1])
+
+            # Bullish mean-reversion: oversold RSI + close below lower BB
+            # (deep in the tail) + today closed green above open (early
+            # reversal). Strength 3 — decent confluence, not extreme.
+            if (
+                curr_rsi < 30
+                and current_price < curr_lower_bb
+                and current_price > curr_open
+                and current_price > prev_close_val
+            ):
+                signals.append(make_signal(
+                    SignalDirection.bullish, 3,
+                    f"MEAN_REV_BUY_RSI{curr_rsi:.0f}",
+                    f"Mean-reversion long setup: RSI oversold ({curr_rsi:.1f}), "
+                    f"price ${current_price:.2f} below lower BB (${curr_lower_bb:.2f}), "
+                    f"green reversal candle. Bounce target near BB middle.",
+                ))
+
+            # Bearish mean-reversion mirror: overbought RSI + close above
+            # upper BB + red reversal candle.
+            if (
+                curr_rsi > 70
+                and current_price > curr_upper_bb
+                and current_price < curr_open
+                and current_price < prev_close_val
+            ):
+                signals.append(make_signal(
+                    SignalDirection.bearish, 3,
+                    f"MEAN_REV_SELL_RSI{curr_rsi:.0f}",
+                    f"Mean-reversion short setup: RSI overbought ({curr_rsi:.1f}), "
+                    f"price ${current_price:.2f} above upper BB (${curr_upper_bb:.2f}), "
+                    f"red reversal candle. Pullback target near BB middle.",
+                ))
+
         # ── Volume spike ──────────────────────────────────────────────────────
         if len(vol_ma20.dropna()) >= 1:
             avg_vol = float(vol_ma20.iloc[-1])

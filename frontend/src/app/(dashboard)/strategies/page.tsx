@@ -28,6 +28,14 @@ const EMPTY_OVERRIDES: StrengthOverrideMap = Object.fromEntries(
   OVERRIDE_TYPES.map((t) => [t.key, null])
 );
 
+// Regime names must match app.models.market_regime.REGIME_NAMES.
+const REGIME_OPTIONS: Array<{ key: string; label: string; hint: string }> = [
+  { key: "bull_low_vol",  label: "Bull · low vol",  hint: "SPX>200SMA, VIX<20 — best for momentum longs" },
+  { key: "bull_high_vol", label: "Bull · high vol", hint: "SPX>200SMA, VIX≥20 — trending but choppy" },
+  { key: "bear_low_vol",  label: "Bear · low vol",  hint: "SPX<200SMA, VIX<20 — grinding down" },
+  { key: "bear_high_vol", label: "Bear · high vol", hint: "SPX<200SMA, VIX≥20 — panic / capitulation" },
+];
+
 const DEFAULT_CREATE = {
   name: "",
   description: "",
@@ -37,6 +45,9 @@ const DEFAULT_CREATE = {
   signal_type_strength_overrides: { ...EMPTY_OVERRIDES } as StrengthOverrideMap,
   tickers: "",
   excluded_tickers: "",
+  // Empty = allow any regime. When populated, the auto-trader only
+  // opens new positions when the current market regime is one of these.
+  allowed_regimes: [] as string[],
   allocation_mode: "fixed" as "fixed" | "percent",
   allocation_value: 2000,
   max_position_pct: 10,
@@ -341,6 +352,12 @@ function StrategyDetail({ strategy: s }: { strategy: Strategy }) {
         {s.excluded_tickers && (
           <DetailField label="Excluded tickers" value={s.excluded_tickers} />
         )}
+        {s.allowed_regimes && (
+          <DetailField
+            label="Allowed regimes"
+            value={s.allowed_regimes.split(",").map((r) => r.trim()).join(" · ")}
+          />
+        )}
       </div>
 
       {/* Trades */}
@@ -460,6 +477,9 @@ function CreateStrategyModal({
       exit_on_opposite_signal: existing.exit_on_opposite_signal,
       extend_on_continuing_signal: existing.extend_on_continuing_signal,
       stop_loss_pct: existing.stop_loss_pct,
+      allowed_regimes: existing.allowed_regimes
+        ? existing.allowed_regimes.split(",").map((s) => s.trim()).filter(Boolean)
+        : [],
     };
   });
 
@@ -474,6 +494,9 @@ function CreateStrategyModal({
         description: form.description.trim() || null,
         tickers: form.tickers.trim() || null,
         excluded_tickers: form.excluded_tickers.trim() || null,
+        // Regimes come back as string[] from the form but the API
+        // expects a comma-separated string (matches tickers convention).
+        allowed_regimes: form.allowed_regimes.length ? form.allowed_regimes.join(",") : null,
         signal_type: form.signal_type || null,
         signal_type_strength_overrides: Object.keys(overrides).length ? overrides : null,
       };
@@ -636,6 +659,42 @@ function CreateStrategyModal({
               <p className="mt-1 text-[11px] text-muted-foreground">
                 Consistent losers surfaced by the analysis script go here.
                 Skips buys AND opposite-signal exits for these tickers.
+              </p>
+            </Field>
+            <Field label="Allowed market regimes (none = trade in any regime)">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                {REGIME_OPTIONS.map((r) => {
+                  const checked = form.allowed_regimes.includes(r.key);
+                  return (
+                    <label
+                      key={r.key}
+                      className="flex items-start gap-2 cursor-pointer px-2 py-1.5 rounded border border-border/50 hover:bg-secondary/50 text-xs"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          update(
+                            "allowed_regimes",
+                            e.target.checked
+                              ? [...form.allowed_regimes, r.key]
+                              : form.allowed_regimes.filter((k) => k !== r.key),
+                          );
+                        }}
+                        className="mt-0.5 accent-primary shrink-0"
+                      />
+                      <div>
+                        <div className="font-medium">{r.label}</div>
+                        <div className="text-muted-foreground text-[10px]">{r.hint}</div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Only <em>new opens</em> are gated. Exits (opposite signal, stop-loss)
+                still fire on existing positions even if the regime is no longer allowed —
+                so trades don't get trapped when the market flips.
               </p>
             </Field>
           </Section>

@@ -22,6 +22,7 @@ celery_app = Celery(
         "app.workers.tasks.market_snapshot",
         "app.workers.tasks.briefing_pregenerate",
         "app.workers.tasks.backtest",
+        "app.workers.tasks.regime_refresh",
     ],
 )
 
@@ -111,6 +112,18 @@ celery_app.conf.beat_schedule = {
     "auto-trader-stop-loss-sweep": {
         "task": "app.workers.tasks.auto_trader.stop_loss_sweep",
         "schedule": 900,  # 15 min
+    },
+    # Market regime refresh — one post-close (22:30 UTC) for the day's
+    # canonical classification, one mid-session (15:00 UTC = 11:00 EDT)
+    # so intraday VIX spikes flip the regime before auto_trader opens
+    # more positions.
+    "regime-refresh-postclose": {
+        "task": "app.workers.tasks.regime_refresh.refresh_regime",
+        "schedule": crontab(hour=22, minute=30),
+    },
+    "regime-refresh-midsession": {
+        "task": "app.workers.tasks.regime_refresh.refresh_regime",
+        "schedule": crontab(hour=15, minute=0),
     },
     # Market snapshot for AI advisor grounding — every 4 hours at :15.
     # Indices, commodities, crypto, forex, sectors, movers, headlines,
