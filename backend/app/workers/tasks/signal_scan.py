@@ -6,8 +6,10 @@ import asyncio
 import logging
 import time
 
+import redis.asyncio as aioredis
 from sqlalchemy import select
 
+from app.config import get_settings
 from app.database import AsyncSessionLocal
 from app.models.watchlist import WatchlistItem
 from app.services.signal_engine import SignalEngine
@@ -22,6 +24,15 @@ log = logging.getLogger("jarvis")
 # multiple Postgres connections per worker process.
 SCAN_CONCURRENCY = 8
 
+# Redis lock so at most one full-watchlist scan runs at a time. Prevents
+# duplicate signal rows when Celery's Redis broker redelivers a message
+# (visibility_timeout expiry, worker restart mid-task, whatever) — the
+# second attempt finds the lock held and no-ops cleanly. TTL is a safety
+# net: if a scan crashes without releasing the lock, the next tick
+# (15 min later) can still acquire.
+SCAN_LOCK_KEY = "lock:scan_all_watchlist_tickers"
+SCAN_LOCK_TTL_SEC = 900  # matches beat cadence — never blocks the next real tick
+
 
 @celery_app.task(name="app.workers.tasks.signal_scan.scan_all_watchlist_tickers", bind=True)
 def scan_all_watchlist_tickers(self):
@@ -29,6 +40,31 @@ def scan_all_watchlist_tickers(self):
 
 
 async def _scan_all_watchlist_tickers():
+    settings = get_settings()
+    redis_client = aioredis.from_url(settings.redis_url)
+    try:
+        # SET NX EX = atomic "acquire or fail". Only one holder at a time.
+        got_lock = await redis_client.set(
+            SCAN_LOCK_KEY, "1", nx=True, ex=SCAN_LOCK_TTL_SEC,
+        )
+        if not got_lock:
+            log.info("Signal scan already running — skipping duplicate dispatch")
+            return
+
+        try:
+            await _run_scan()
+        finally:
+            # Release best-effort. Not catastrophic if delete fails —
+            # the TTL will clean up on its own.
+            try:
+                await redis_client.delete(SCAN_LOCK_KEY)
+            except Exception:
+                log.warning("Signal scan: failed to release Redis lock", exc_info=True)
+    finally:
+        await redis_client.aclose()
+
+
+async def _run_scan() -> None:
     # Read the ticker list in one short-lived session, then release it
     # so the fan-out below can each grab their own connection cleanly.
     async with AsyncSessionLocal() as db:

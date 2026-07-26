@@ -283,18 +283,24 @@ class TechnicalSignalProvider(BaseSignalProvider):
         # so it tends to fire near reversals not trend starts.
 
         # ── Price vs 50-day SMA cross ─────────────────────────────────────────
-        if len(sma50.dropna()) >= self.CROSSOVER_LOOKBACK + 1:
+        sma50_valid = sma50.dropna()
+        if len(sma50_valid) >= self.CROSSOVER_LOOKBACK + 1:
+            # Use the last VALID (non-NaN) SMA for display. yfinance
+            # sometimes returns a today-bar with NaN close during off-hours,
+            # which makes the rolling mean NaN at position -1 even though
+            # a real prior-bar SMA exists.
+            sma50_display = float(sma50_valid.iloc[-1])
             if crossed_above(close, sma50, self.CROSSOVER_LOOKBACK):
                 signals.append(make_signal(
                     SignalDirection.bullish, 3,
                     "PRICE_CROSS_SMA50_UP",
-                    f"Price crossed above 50-day SMA (${float(sma50.iloc[-1]):.2f}) — short-term trend turning bullish.",
+                    f"Price crossed above 50-day SMA (${sma50_display:.2f}) — short-term trend turning bullish.",
                 ))
             elif crossed_below(close, sma50, self.CROSSOVER_LOOKBACK):
                 signals.append(make_signal(
                     SignalDirection.bearish, 3,
                     "PRICE_CROSS_SMA50_DOWN",
-                    f"Price crossed below 50-day SMA (${float(sma50.iloc[-1]):.2f}) — short-term trend turning bearish.",
+                    f"Price crossed below 50-day SMA (${sma50_display:.2f}) — short-term trend turning bearish.",
                 ))
 
         # ── Golden / Death cross (50/200 SMA) ────────────────────────────────
