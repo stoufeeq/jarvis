@@ -169,6 +169,17 @@ class TechnicalSignalProvider(BaseSignalProvider):
         if df is None or len(df) < 50:
             return []
 
+        # yfinance often ships a "today" bar with NaN close outside
+        # trading hours (weekends, pre-market). Drop those tail rows
+        # so every downstream computation sees only real data. Without
+        # this, current_price / atr_val / SMA display values are NaN,
+        # which pollutes every Signal row's entry_price + stop_loss +
+        # take_profit fields even though the crossover detection itself
+        # is robust (it uses dropna internally).
+        df = df.dropna(subset=["Close"])
+        if len(df) < 50:
+            return []
+
         close = df["Close"]
         high = df["High"]
         low = df["Low"]
