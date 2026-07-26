@@ -42,6 +42,10 @@ celery_app.conf.update(
         "app.workers.tasks.market_data.*": {"queue": "market_data"},
         "app.workers.tasks.signal_scan.*": {"queue": "signals"},
         "app.workers.tasks.news_digest.*": {"queue": "default"},
+        # Stop-loss on its own queue so a slow signal_scan (or any
+        # backlog on `default`) can't delay the sweep. The worker's
+        # -Q list includes stop_loss so it's actually consumed.
+        "app.workers.tasks.auto_trader.stop_loss_sweep": {"queue": "stop_loss"},
     },
 )
 

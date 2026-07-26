@@ -13,7 +13,7 @@ case "${COMMAND:-api}" in
     # Memory: each prefork child is a COW fork of the parent (~300 MB
     # base), diverges only on writes, so two children under the
     # 1400 MB cgroup limit is safe for our workloads.
-    exec celery -A app.workers.celery_app worker --loglevel=info --pool=prefork --concurrency=2 -Q celery,market_data,signals,default
+    exec celery -A app.workers.celery_app worker --loglevel=info --pool=prefork --concurrency=2 -Q celery,market_data,signals,default,stop_loss
     ;;
   beat)
     exec celery -A app.workers.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
