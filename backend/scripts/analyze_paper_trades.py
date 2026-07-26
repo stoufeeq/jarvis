@@ -12,9 +12,19 @@ Run inside the backend container (uses the same DATABASE_URL as the API):
     docker exec jarvis-backend-1 python scripts/analyze_paper_trades.py
     docker exec jarvis-backend-1 python scripts/analyze_paper_trades.py > /tmp/paper_report.txt
 
+By default the report aggregates ALL users' paper trades — fine for a
+single-user install, misleading when the same DB has multiple accounts.
+Scope to one user with either flag:
+
+    --email you@example.com   pick user by email
+    --user-id 2               pick user by numeric id
+
+Also accepts --strategy-id N to restrict to a single strategy.
+
 The script is read-only — no DB writes, safe to run against production.
 """
 
+import argparse
 import asyncio
 import sys
 from collections import defaultdict
@@ -31,6 +41,7 @@ from app.database import AsyncSessionLocal
 from app.models.market_regime import MarketRegime
 from app.models.signal import Signal, SignalType, SignalDirection
 from app.models.strategy import (
+    Strategy,
     StrategyTrade,
     StrategyTradeStatus,
     StrategyExitReason,
@@ -79,17 +90,31 @@ def _pnl(entry: float, exit_: float, qty: float, direction: SignalDirection) -> 
     return 0.0
 
 
-async def load_closed_trades() -> list[ClosedTrade]:
+async def load_closed_trades(
+    user_id: int | None = None,
+    strategy_id: int | None = None,
+) -> list[ClosedTrade]:
     """Prefer the snapshot fields on StrategyTrade (introduced 2026-07-21)
     since they survive signal rescans. Fall back to joining Signal via
     trigger_signal_id for pre-snapshot rows where the FK still resolves
-    (rare — most historic FKs got NULLed within 15 min of trade creation)."""
+    (rare — most historic FKs got NULLed within 15 min of trade creation).
+
+    Optional scoping:
+      user_id     → only trades whose strategy belongs to this user
+      strategy_id → only trades from this specific strategy
+    """
     async with AsyncSessionLocal() as db:
         stmt = (
             select(StrategyTrade)
             .where(StrategyTrade.status == StrategyTradeStatus.closed)
             .options(selectinload(StrategyTrade.strategy))
         )
+        if user_id is not None or strategy_id is not None:
+            stmt = stmt.join(Strategy, StrategyTrade.strategy_id == Strategy.id)
+            if user_id is not None:
+                stmt = stmt.where(Strategy.user_id == user_id)
+            if strategy_id is not None:
+                stmt = stmt.where(Strategy.id == strategy_id)
         result = await db.execute(stmt)
         st_rows: list[StrategyTrade] = list(result.scalars().all())
 
@@ -403,10 +428,45 @@ def report_recommendations(trades: list[ClosedTrade]) -> str:
     return "\n".join(lines) + "\n"
 
 
-async def main():
-    trades = await load_closed_trades()
+async def _resolve_user_id(email: str) -> int:
+    """Look up a user by email so --email can be used interchangeably
+    with --user-id. Raises if the email doesn't match anyone."""
+    from app.models.user import User
+    async with AsyncSessionLocal() as db:
+        row = await db.execute(select(User.id).where(User.email == email))
+        result = row.scalar_one_or_none()
+        if result is None:
+            raise SystemExit(f"No user found with email {email!r}")
+        return result
 
-    print(_header(f"PAPER TRADING SIGNAL ANALYSIS  ({datetime.now(timezone.utc).isoformat(timespec='minutes')} UTC)"))
+
+async def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[1])
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument("--email", help="Scope the report to this user's strategies")
+    scope.add_argument("--user-id", type=int, help="Scope the report to this user_id")
+    parser.add_argument(
+        "--strategy-id", type=int,
+        help="Scope the report to a single strategy (composes with --email/--user-id)",
+    )
+    args = parser.parse_args()
+
+    user_id: int | None = args.user_id
+    if args.email and user_id is None:
+        user_id = await _resolve_user_id(args.email)
+
+    scope_label_parts = []
+    if user_id is not None:
+        scope_label_parts.append(
+            f"user_id={user_id}" if not args.email else f"user={args.email} (id={user_id})"
+        )
+    if args.strategy_id is not None:
+        scope_label_parts.append(f"strategy_id={args.strategy_id}")
+    scope_label = f" [scope: {', '.join(scope_label_parts)}]" if scope_label_parts else " [scope: ALL USERS]"
+
+    trades = await load_closed_trades(user_id=user_id, strategy_id=args.strategy_id)
+
+    print(_header(f"PAPER TRADING SIGNAL ANALYSIS  ({datetime.now(timezone.utc).isoformat(timespec='minutes')} UTC){scope_label}"))
     print(f"\n Loaded {len(trades)} closed paper trades from strategy_trades.\n")
 
     if not trades:
