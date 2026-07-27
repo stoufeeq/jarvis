@@ -47,6 +47,13 @@ class Portfolio(TimestampMixin, Base):
     initial_cash: Mapped[float | None] = mapped_column(Numeric(18, 4))
     cash_balance: Mapped[float | None] = mapped_column(Numeric(18, 4))
 
+    # Comma-separated list of account IDs that trades in this portfolio
+    # may draw from. NULL / empty = no restriction (legacy). When set,
+    # trade_cash rejects explicit account_id not in the list AND filters
+    # the auto-funding fallback chain to only these accounts. Prevents
+    # the class of drift where IBKR trades quietly tapped SRS SGD.
+    allowed_account_ids: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
     user: Mapped["User"] = relationship(back_populates="portfolios")  # noqa: F821
     positions: Mapped[list["Position"]] = relationship(
         back_populates="portfolio", cascade="all, delete-orphan"

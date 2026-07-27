@@ -68,6 +68,25 @@ def _cash_impact(trade: Trade) -> tuple[float, bool]:
     return (notional - fees, False)
 
 
+def _parse_allowed_account_ids(csv: str | None) -> set[int] | None:
+    """Portfolio.allowed_account_ids is CSV; None/empty means no restriction.
+    Return None when unrestricted, else a set of ints for O(1) membership."""
+    if not csv or not csv.strip():
+        return None
+    ids: set[int] = set()
+    for part in csv.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            ids.add(int(part))
+        except ValueError:
+            # Malformed entry — skip rather than raise, so a data glitch
+            # can't break every trade attempt on this portfolio.
+            log.warning("Malformed account_id in allowed list: %r", part)
+    return ids or None
+
+
 def _label(trade: Trade) -> str:
     """Human-readable note shown in the account-transactions list."""
     return (
@@ -91,6 +110,8 @@ class TradeCashService:
             return
         currency = trade.currency.upper()
 
+        allowed_ids = _parse_allowed_account_ids(portfolio.allowed_account_ids)
+
         # Explicit account selection bypasses the fallback chain entirely.
         if trade.account_id is not None:
             account = await self.db.get(Account, trade.account_id)
@@ -98,6 +119,19 @@ class TradeCashService:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Funding account #{trade.account_id} not found or not yours",
+                )
+            # Portfolio-level restriction: reject explicit account not in
+            # the whitelist. Prevents users from accidentally picking
+            # e.g. SRS for an IBKR trade in the Edit UI.
+            if allowed_ids is not None and trade.account_id not in allowed_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Funding account #{trade.account_id} is not on this "
+                        f"portfolio's allowed list {sorted(allowed_ids)}. "
+                        f"Either pick an allowed account or edit the portfolio's "
+                        f"'Allowed funding accounts' setting."
+                    ),
                 )
             if is_debit:
                 await self._debit_chosen_account(account, trade, amount, currency)
@@ -107,10 +141,12 @@ class TradeCashService:
 
         # Fall back to the legacy USD → SGD → EUR priority chain when no
         # account is specified (backward compatible with pre-feature trades).
+        # Pass the allowed_ids filter so the chain only considers approved
+        # accounts — same rule that protects explicit-account trades above.
         if is_debit:
-            await self._debit(portfolio.user_id, trade, amount, currency)
+            await self._debit(portfolio.user_id, trade, amount, currency, allowed_ids)
         else:
-            await self._credit(portfolio.user_id, trade, amount, currency)
+            await self._credit(portfolio.user_id, trade, amount, currency, allowed_ids)
 
     async def on_trade_updated(self, portfolio: Portfolio, trade: Trade) -> None:
         """Reverse prior cash effects of this trade, then re-apply."""
@@ -149,13 +185,26 @@ class TradeCashService:
 
     # ── Internals ─────────────────────────────────────────────────────────
 
-    async def _debit(self, user_id: int, trade: Trade, amount: float, trade_ccy: str) -> None:
+    async def _debit(
+        self,
+        user_id: int,
+        trade: Trade,
+        amount: float,
+        trade_ccy: str,
+        allowed_ids: set[int] | None = None,
+    ) -> None:
         """Pull `amount` (in trade_ccy) from accounts using the priority chain.
-        Creates one AccountTransaction per source-account drained."""
+        Creates one AccountTransaction per source-account drained.
+
+        `allowed_ids` (if not None) restricts the fallback chain to just
+        those account IDs. Everything else is invisible to the drain.
+        """
         order = self._currency_priority(trade_ccy)
 
         # Build the list of (account, currency, balance) tuples in drain order.
         accounts = await self._user_accounts(user_id)
+        if allowed_ids is not None:
+            accounts = [a for a in accounts if a.id in allowed_ids]
         if not accounts:
             # Soft-skip: legacy behaviour preserved when user hasn't set up
             # any cash accounts at all. Logged but no error.
@@ -221,10 +270,23 @@ class TradeCashService:
 
         await self.db.flush()
 
-    async def _credit(self, user_id: int, trade: Trade, amount: float, trade_ccy: str) -> None:
+    async def _credit(
+        self,
+        user_id: int,
+        trade: Trade,
+        amount: float,
+        trade_ccy: str,
+        allowed_ids: set[int] | None = None,
+    ) -> None:
         """Deposit `amount` into an account in trade_ccy if one exists,
-        else into the oldest USD account, creating one if needed."""
+        else into the oldest USD account, creating one if needed.
+
+        `allowed_ids` (if not None) restricts the pick to accounts on
+        the portfolio's whitelist.
+        """
         accounts = await self._user_accounts(user_id)
+        if allowed_ids is not None:
+            accounts = [a for a in accounts if a.id in allowed_ids]
         if not accounts:
             log.info("Trade-cash: no accounts for user %s, skipping credit", user_id)
             return

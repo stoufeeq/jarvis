@@ -24,6 +24,9 @@ class PortfolioUpdate(BaseModel):
     # portfolios. Negative values are rejected.
     initial_cash: float | None = Field(default=None, ge=0)
     cash_balance: float | None = Field(default=None, ge=0)
+    # Comma-separated list of account IDs this portfolio may fund trades
+    # from. NULL / empty string = no restriction (legacy behaviour).
+    allowed_account_ids: str | None = None
 
 
 class PortfolioRead(BaseModel):
@@ -37,6 +40,7 @@ class PortfolioRead(BaseModel):
     created_at: datetime
     initial_cash: float | None = None
     cash_balance: float | None = None
+    allowed_account_ids: str | None = None
     # True if any Strategy targets this portfolio. Manual trade endpoints
     # reject when this is set, so the UI hides the corresponding actions.
     is_auto_managed: bool = False

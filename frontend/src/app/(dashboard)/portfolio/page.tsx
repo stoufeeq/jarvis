@@ -62,6 +62,9 @@ export default function PortfolioPage() {
   const [editingPortfolio, setEditingPortfolio] = useState<Portfolio | null>(null);
   const [editName, setEditName] = useState("");
   const [editCurrency, setEditCurrency] = useState("USD");
+  // Multi-select — which account IDs the portfolio may fund trades from.
+  // Empty array = save as null (no restriction). Non-empty = save as CSV.
+  const [editAllowedAccountIds, setEditAllowedAccountIds] = useState<number[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<"positions" | "trades">("positions");
   const [expandedTicker, setExpandedTicker] = useState<string | null>(null);
@@ -162,10 +165,24 @@ export default function PortfolioPage() {
   const isPrivate = usePrivacyStore((s) => s.isPrivate);
   const mv = (val: string) => (isPrivate ? MASK : val);
 
+  // Accounts list — shown as checkboxes in the Edit Portfolio modal so
+  // the user can pick which accounts this portfolio may fund trades from.
+  // Same query key as the trade form's fetch further down; React Query
+  // dedupes so only one HTTP hit.
+  const { data: allAccounts = [] } = useQuery<import("@/types").Account[]>({
+    queryKey: ["accounts"],
+    queryFn: () => accountsApi.list().then((r) => r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+
   const updatePortfolioMutation = useMutation({
     mutationFn: () => portfolioApi.update(editingPortfolio!.id, {
       name: editName.trim() || undefined,
       currency: editCurrency.trim().toUpperCase() || undefined,
+      // null = no restriction; joined CSV = restrict to these IDs.
+      allowed_account_ids: editAllowedAccountIds.length
+        ? editAllowedAccountIds.join(",")
+        : null,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["portfolios"] });
@@ -609,6 +626,51 @@ export default function PortfolioPage() {
                   <option value="INR">INR — Indian Rupee</option>
                 </select>
               </div>
+              {editingPortfolio?.broker !== "paper" && (
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">
+                    Allowed funding accounts
+                  </label>
+                  <div className="space-y-1 max-h-52 overflow-y-auto border border-border rounded-md p-2 bg-input">
+                    {allAccounts.length === 0 && (
+                      <p className="text-[11px] text-muted-foreground italic">
+                        No accounts yet.
+                      </p>
+                    )}
+                    {allAccounts.map((a) => {
+                      const checked = editAllowedAccountIds.includes(a.id);
+                      return (
+                        <label
+                          key={a.id}
+                          className="flex items-center gap-2 text-xs cursor-pointer hover:bg-secondary/50 px-1 py-0.5 rounded"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              setEditAllowedAccountIds((prev) =>
+                                e.target.checked
+                                  ? [...prev, a.id]
+                                  : prev.filter((id) => id !== a.id)
+                              );
+                            }}
+                            className="accent-primary"
+                          />
+                          <span>{a.name}</span>
+                          <span className="text-muted-foreground">
+                            ({a.primary_currency})
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {editAllowedAccountIds.length === 0
+                      ? "No accounts selected → any account can fund trades in this portfolio (legacy behaviour)."
+                      : `Only these ${editAllowedAccountIds.length} accounts can fund trades. Others will be rejected at save time.`}
+                  </p>
+                </div>
+              )}
             </div>
             <div className="flex gap-2 pt-1">
               <button
@@ -730,6 +792,14 @@ export default function PortfolioPage() {
                       setEditingPortfolio(p);
                       setEditName(p.name);
                       setEditCurrency(p.currency ?? "USD");
+                      setEditAllowedAccountIds(
+                        p.allowed_account_ids
+                          ? p.allowed_account_ids
+                              .split(",")
+                              .map((s) => parseInt(s.trim(), 10))
+                              .filter((n) => !Number.isNaN(n))
+                          : []
+                      );
                     }}
                     className="p-1.5 rounded-md text-muted-foreground hover:bg-secondary/60 hover:text-foreground transition-colors"
                     title="Edit portfolio"

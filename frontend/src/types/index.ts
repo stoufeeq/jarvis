@@ -17,6 +17,10 @@ export interface Portfolio {
   position_count?: number;
   initial_cash?: number | null;
   cash_balance?: number | null;
+  // Comma-separated account IDs this portfolio may fund trades from.
+  // Null / empty = no restriction (any account). Populated = trade_cash
+  // rejects non-listed accounts on save and filters the auto fallback.
+  allowed_account_ids?: string | null;
   // Set by backend when any Strategy targets this portfolio. UI hides
   // manual trade actions when true so they can't desync the auto-trader.
   is_auto_managed?: boolean;
