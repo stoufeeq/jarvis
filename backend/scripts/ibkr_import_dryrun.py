@@ -13,9 +13,14 @@ performs the actual rebuild after the user reviews this output.
 
 Usage:
     docker cp <path-to-xlsx> jarvis-backend-1:/tmp/ibkr.xlsx
-    docker exec jarvis-backend-1 python scripts/ibkr_import_dryrun.py /tmp/ibkr.xlsx
+    docker exec jarvis-backend-1 python scripts/ibkr_import_dryrun.py \\
+        /tmp/ibkr.xlsx --portfolio-id 1
+
+Portfolio ID must be given explicitly — the DB may contain multiple
+portfolios named 'IBKR' across different users, so guessing is unsafe.
 """
 
+import argparse
 import asyncio
 import sys
 from collections import defaultdict
@@ -27,8 +32,8 @@ from sqlalchemy import select
 sys.path.insert(0, "/app")
 
 from app.database import AsyncSessionLocal
-from app.models.account import Account, AccountTransaction, TransactionType
-from app.models.portfolio import BrokerType, Portfolio, Trade
+from app.models.account import AccountTransaction, TransactionType
+from app.models.portfolio import Portfolio, Trade
 
 
 # Currency → account_id mapping. Confirmed by the user 2026-07-28.
@@ -87,29 +92,16 @@ def _summarise_import(df: pd.DataFrame) -> None:
     print(f"  Unique tickers: {df['Symbol'].nunique()}")
 
 
-async def _snapshot_existing() -> tuple[Portfolio, list[Trade]]:
-    """Fetch the current IBKR portfolio + its existing trades so we can
-    show what would be deleted."""
+async def _snapshot_existing(portfolio_id: int) -> tuple[Portfolio, list[Trade]]:
+    """Fetch the target portfolio + its existing trades. Portfolio ID
+    is passed explicitly (not looked up by name) because the DB can
+    contain multiple portfolios named 'IBKR' across users."""
     async with AsyncSessionLocal() as db:
-        # Look up the IBKR portfolio. Prefer broker=ibkr; fall back to
-        # name=IBKR for legacy setups where broker was set to 'manual'.
-        result = await db.execute(
-            select(Portfolio).where(
-                Portfolio.broker == BrokerType.ibkr,
-                Portfolio.is_active.is_(True),
-            )
-        )
-        portfolio = result.scalar_one_or_none()
+        portfolio = await db.get(Portfolio, portfolio_id)
         if portfolio is None:
-            result = await db.execute(
-                select(Portfolio).where(
-                    Portfolio.name == "IBKR",
-                    Portfolio.is_active.is_(True),
-                )
-            )
-            portfolio = result.scalar_one_or_none()
-        if portfolio is None:
-            raise SystemExit("No active IBKR portfolio found. Create one first.")
+            raise SystemExit(f"Portfolio id={portfolio_id} not found.")
+        if not portfolio.is_active:
+            raise SystemExit(f"Portfolio id={portfolio_id} is inactive.")
 
         trades_result = await db.execute(
             select(Trade).where(Trade.portfolio_id == portfolio.id)
@@ -212,13 +204,18 @@ def _print_balance_projection(
 
 
 async def main():
-    if len(sys.argv) != 2:
-        raise SystemExit("Usage: ibkr_import_dryrun.py <path/to/trades.xlsx>")
-    path = sys.argv[1]
-    df = _load_spreadsheet(path)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("xlsx", help="Path to the IBKR trades .xlsx export")
+    parser.add_argument(
+        "--portfolio-id", type=int, required=True,
+        help="Explicit portfolio id to rebuild (avoids name-based guessing)",
+    )
+    args = parser.parse_args()
+
+    df = _load_spreadsheet(args.xlsx)
     _summarise_import(df)
 
-    portfolio, existing = await _snapshot_existing()
+    portfolio, existing = await _snapshot_existing(args.portfolio_id)
     _print_deletions(portfolio, existing)
 
     current_balances = await _snapshot_balances()
