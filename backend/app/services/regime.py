@@ -34,7 +34,10 @@ from app.services.market_data import MarketDataService
 
 log = logging.getLogger(__name__)
 
-VIX_THRESHOLD = 20.0
+VIX_HIGH_THRESHOLD = 20.0
+VIX_CRISIS_THRESHOLD = 30.0
+# Kept for backward compat with any external caller — same meaning.
+VIX_THRESHOLD = VIX_HIGH_THRESHOLD
 SMA_WINDOW = 200
 # yfinance ticker for the S&P 500 index. SPY (the ETF) tracks it 1:1
 # and has cleaner intraday data than ^GSPC.
@@ -45,8 +48,10 @@ VIX_TICKER = "^VIX"
 REGIMES = (
     "bull_low_vol",
     "bull_high_vol",
+    "bull_crisis",
     "bear_low_vol",
     "bear_high_vol",
+    "bear_crisis",
 )
 
 
@@ -64,16 +69,23 @@ def _normalize_index(s: pd.Series) -> pd.Series:
 
 
 def classify(spx_close: float, spx_sma200: float, vix_close: float) -> str:
-    """Deterministic 2×2 classification. Pure function — no I/O."""
+    """Deterministic 2×3 classification: bull/bear × low/high/crisis.
+    Pure function — no I/O.
+
+    Both VIX cutoffs are inclusive on the higher side (VIX==20 counts as
+    high_vol; VIX==30 counts as crisis). Rationale: if vol just spiked
+    exactly to the boundary, treat it as the more defensive regime —
+    better to false-positive into crisis than false-negative out of it.
+    """
     is_bull = spx_close > spx_sma200
-    is_low_vol = vix_close < VIX_THRESHOLD
-    if is_bull and is_low_vol:
-        return "bull_low_vol"
-    if is_bull and not is_low_vol:
-        return "bull_high_vol"
-    if not is_bull and is_low_vol:
-        return "bear_low_vol"
-    return "bear_high_vol"
+    prefix = "bull" if is_bull else "bear"
+    if vix_close < VIX_HIGH_THRESHOLD:
+        suffix = "low_vol"
+    elif vix_close < VIX_CRISIS_THRESHOLD:
+        suffix = "high_vol"
+    else:
+        suffix = "crisis"
+    return f"{prefix}_{suffix}"
 
 
 class RegimeService:
@@ -139,12 +151,14 @@ class RegimeService:
             vix_close=float(vix_close),
         )
 
-    async def backfill(self, lookback_days: int = 365) -> int:
-        """Backfill regime rows for the last `lookback_days` (skipping
-        any dates already present). Run once when the feature is first
-        deployed so the analysis script can join historical trades.
+    async def backfill(self, lookback_days: int = 365, force: bool = False) -> int:
+        """Backfill regime rows for the last `lookback_days`.
 
-        Returns the number of rows inserted.
+        By default skips dates that already exist so re-runs are cheap.
+        Pass `force=True` to re-classify existing rows — needed after
+        the classifier itself changes (e.g. new regime tier added).
+
+        Returns the number of rows written (inserted or reclassified).
         """
         mds = MarketDataService()
         # Pull enough history so we can compute 200-SMA at every point
@@ -181,9 +195,14 @@ class RegimeService:
         joined = joined[joined.index.date >= cutoff]  # type: ignore[union-attr]
         log.info("Regime backfill: %d bars after %s cutoff", len(joined), cutoff)
 
-        # Skip dates already in the table so a re-run is cheap.
-        existing_dates_result = await self.db.execute(select(MarketRegime.date))
-        existing_dates = {row[0] for row in existing_dates_result.all()}
+        # Skip dates already in the table so a re-run is cheap. When
+        # `force=True` we ignore that set and upsert every row —
+        # required after the classifier changes (e.g. new regime tier).
+        if force:
+            existing_dates: set = set()
+        else:
+            existing_dates_result = await self.db.execute(select(MarketRegime.date))
+            existing_dates = {row[0] for row in existing_dates_result.all()}
 
         inserted = 0
         for ts, row in joined.iterrows():

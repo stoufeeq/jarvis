@@ -41,16 +41,23 @@ async def _run() -> None:
 
 
 @celery_app.task(name="app.workers.tasks.regime_refresh.backfill_regimes", bind=True)
-def backfill_regimes(self, lookback_days: int = 365):
+def backfill_regimes(self, lookback_days: int = 365, force: bool = False):
     """One-shot backfill so historical strategy_trades can be joined
     to the regime that was in effect on their entry_at date. Dispatched
-    manually via Flower or the shell — not scheduled."""
-    return asyncio.run(_run_backfill(lookback_days))
+    manually via Flower or the shell — not scheduled.
+
+    `force=True` re-classifies existing rows too — needed after
+    changing the classifier (e.g. adding the crisis regime tier).
+    """
+    return asyncio.run(_run_backfill(lookback_days, force))
 
 
-async def _run_backfill(lookback_days: int) -> dict:
+async def _run_backfill(lookback_days: int, force: bool) -> dict:
     async with AsyncSessionLocal() as db:
-        inserted = await RegimeService(db).backfill(lookback_days=lookback_days)
+        n = await RegimeService(db).backfill(lookback_days=lookback_days, force=force)
         await db.commit()
-        log.info("Regime backfill: inserted %d rows (lookback %dd)", inserted, lookback_days)
-        return {"inserted": inserted, "lookback_days": lookback_days}
+        log.info(
+            "Regime backfill: wrote %d rows (lookback %dd, force=%s)",
+            n, lookback_days, force,
+        )
+        return {"written": n, "lookback_days": lookback_days, "force": force}

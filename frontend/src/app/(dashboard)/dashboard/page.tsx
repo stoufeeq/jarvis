@@ -8,6 +8,7 @@ import { formatCurrency, formatPct, pnlColor, currencyLabel } from "@/lib/utils"
 import { useCurrencyDisplay } from "@/hooks/useCurrencyDisplay";
 import { CurrencySwitcher } from "@/components/ui/CurrencySwitcher";
 import { PrivacyToggle } from "@/components/ui/PrivacyToggle";
+import { VixTile } from "@/components/ui/VixTile";
 import { usePrivacyStore } from "@/store/privacy";
 import { useTradingModeStore } from "@/store/tradingMode";
 import type { Portfolio, Position, Signal, Quote, LiquidityResponse, Briefing } from "@/types";
@@ -229,6 +230,12 @@ export default function DashboardPage() {
           note={isPrivate || totalDayChangePct == null ? undefined : formatPct(totalDayChangePct)}
         />
         <StatCard label="Portfolios" value={String(portfolios.length)} />
+      </div>
+
+      {/* Market context row — VIX at-a-glance so the fear gauge is in
+          view without leaving the dashboard. */}
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+        <VixTile />
       </div>
 
       {/* Daily Briefing card */}

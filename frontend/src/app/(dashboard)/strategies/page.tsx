@@ -29,11 +29,14 @@ const EMPTY_OVERRIDES: StrengthOverrideMap = Object.fromEntries(
 );
 
 // Regime names must match app.models.market_regime.REGIME_NAMES.
+// 2026-07-31: crisis tier split from high_vol (VIX ≥ 30 now its own regime).
 const REGIME_OPTIONS: Array<{ key: string; label: string; hint: string }> = [
-  { key: "bull_low_vol",  label: "Bull · low vol",  hint: "SPX>200SMA, VIX<20 — best for momentum longs" },
-  { key: "bull_high_vol", label: "Bull · high vol", hint: "SPX>200SMA, VIX≥20 — trending but choppy" },
-  { key: "bear_low_vol",  label: "Bear · low vol",  hint: "SPX<200SMA, VIX<20 — grinding down" },
-  { key: "bear_high_vol", label: "Bear · high vol", hint: "SPX<200SMA, VIX≥20 — panic / capitulation" },
+  { key: "bull_low_vol",   label: "Bull · low vol",   hint: "SPX>200SMA, VIX<20 — best for momentum longs" },
+  { key: "bull_high_vol",  label: "Bull · high vol",  hint: "SPX>200SMA, VIX 20–30 — trending but choppy" },
+  { key: "bull_crisis",    label: "Bull · crisis",    hint: "SPX>200SMA, VIX≥30 — fear in an uptrend, often contrarian buy" },
+  { key: "bear_low_vol",   label: "Bear · low vol",   hint: "SPX<200SMA, VIX<20 — grinding down" },
+  { key: "bear_high_vol",  label: "Bear · high vol",  hint: "SPX<200SMA, VIX 20–30 — active bear market" },
+  { key: "bear_crisis",    label: "Bear · crisis",    hint: "SPX<200SMA, VIX≥30 — capitulation / rare" },
 ];
 
 const DEFAULT_CREATE = {

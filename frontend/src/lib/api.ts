@@ -110,6 +110,7 @@ export const marketApi = {
   search: (q: string) => api.get("/market/search", { params: { q } }),
   currency: (ticker: string) => api.get(`/market/currency/${ticker}`),
   fx: (from: string, to: string) => api.get("/market/fx", { params: { from, to } }),
+  vix: () => api.get("/market/vix"),
   optionsFlow: (ticker: string) => api.get(`/market/options/${ticker}`),
   heatmap: () => api.get("/market/heatmap"),
   session: () => api.get("/market/session"),

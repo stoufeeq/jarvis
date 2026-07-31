@@ -16,11 +16,14 @@ from app.models.base import TimestampMixin
 
 
 # Valid regime names. Keep in sync with RegimeService.REGIMES.
+# 2026-07-31: crisis tier added — VIX ≥ 30 in either bull or bear.
 REGIME_NAMES = (
     "bull_low_vol",
     "bull_high_vol",
+    "bull_crisis",
     "bear_low_vol",
     "bear_high_vol",
+    "bear_crisis",
 )
 
 

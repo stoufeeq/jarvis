@@ -8,6 +8,33 @@ from app.services.options_data import OptionsDataService
 router = APIRouter(prefix="/market", tags=["market"])
 
 
+@router.get("/vix")
+async def get_vix(_: User = Depends(get_current_user)):
+    """Current VIX level + intraday change + regime bucket. Small
+    wrapper around get_quote('^VIX') so the frontend doesn't need to
+    URL-encode the caret every render."""
+    from fastapi import HTTPException as _HTTPException
+    try:
+        q = await MarketDataService().get_quote("^VIX")
+    except ValueError as exc:
+        raise _HTTPException(status_code=404, detail=str(exc))
+    level = q["price"]
+    # Same tiering the regime classifier uses (see app.services.regime).
+    if level < 20:
+        tier = "low_vol"
+    elif level < 30:
+        tier = "high_vol"
+    else:
+        tier = "crisis"
+    return {
+        "level": level,
+        "previous_close": q["previous_close"],
+        "change": q["change"],
+        "change_pct": q["change_pct"],
+        "tier": tier,  # low_vol | high_vol | crisis
+    }
+
+
 @router.get("/quote/{ticker}")
 async def get_quote(ticker: str, _: User = Depends(get_current_user)):
     """Latest price, change, volume for a ticker."""
