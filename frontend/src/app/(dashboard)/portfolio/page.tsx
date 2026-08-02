@@ -861,7 +861,12 @@ export default function PortfolioPage() {
 
           {/* Performance chart — equity curve over selected period */}
           {selectedId && (
-            <PortfolioPerformanceChart portfolioId={selectedId} isPrivate={isPrivate} />
+            <PortfolioPerformanceChart
+              portfolioId={selectedId}
+              isPrivate={isPrivate}
+              displayCurrency={displayCurrency}
+              convert={convert}
+            />
           )}
 
           {/* Auto-managed portfolio banner: explain why manual actions are hidden */}

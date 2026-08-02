@@ -52,9 +52,20 @@ const PERIODS: { label: string; value: string }[] = [
 interface Props {
   portfolioId: number;
   isPrivate?: boolean;
+  // Currency the parent Portfolio page is displaying totals in (via the
+  // top-right CurrencySwitcher). Defaults preserve legacy call sites.
+  displayCurrency?: string;
+  // Converts a value from the portfolio base currency to displayCurrency.
+  // Returns null when the amount itself is null/undefined.
+  convert?: (v: number | null | undefined) => number | null;
 }
 
-export function PortfolioPerformanceChart({ portfolioId, isPrivate }: Props) {
+export function PortfolioPerformanceChart({
+  portfolioId,
+  isPrivate,
+  displayCurrency,
+  convert,
+}: Props) {
   const [period, setPeriod] = useState("6mo");
 
   const { data, isLoading, error } = useQuery<PerformanceResponse>({
@@ -65,8 +76,26 @@ export function PortfolioPerformanceChart({ portfolioId, isPrivate }: Props) {
     staleTime: 10 * 60 * 1000,
   });
 
-  const points = data?.points ?? [];
-  const currency = data?.currency ?? "USD";
+  // The API returns everything in the portfolio's base currency. Convert
+  // for display if the parent passed a converter; otherwise show raw
+  // (backwards compat with any call site that hasn't wired currency yet).
+  const baseCurrency = data?.currency ?? "USD";
+  const currency = displayCurrency ?? baseCurrency;
+  const conv = (v: number | null | undefined): number => {
+    if (v == null) return 0;
+    if (!convert) return v;
+    const out = convert(v);
+    return out ?? v;
+  };
+
+  // Convert chart-point mv/cb so the Y-axis + tooltip render in the
+  // display currency. Percent metrics are currency-independent — no
+  // conversion needed on those.
+  const points = (data?.points ?? []).map((p) => ({
+    date: p.date,
+    market_value: conv(p.market_value),
+    cost_basis: conv(p.cost_basis),
+  }));
 
   // Pick a tick interval that yields roughly 6 visible date labels.
   const tickInterval = points.length > 6 ? Math.floor(points.length / 6) : 0;
@@ -97,7 +126,7 @@ export function PortfolioPerformanceChart({ portfolioId, isPrivate }: Props) {
                   {withSign(metrics.unrealised_pnl_pct)}%
                   {!isPrivate && (
                     <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                      ({withSign(metrics.unrealised_pnl, 0)} {currency})
+                      ({withSign(conv(metrics.unrealised_pnl), 0)} {currency})
                     </span>
                   )}
                 </p>
@@ -112,7 +141,7 @@ export function PortfolioPerformanceChart({ portfolioId, isPrivate }: Props) {
                 <p className={`font-semibold ${signColour(metrics.realised_pnl_period)}`}>
                   {!isPrivate
                     ? `${metrics.realised_pnl_period >= 0 ? "+" : ""}${formatCurrency(
-                        metrics.realised_pnl_period,
+                        conv(metrics.realised_pnl_period),
                         currency,
                       )}`
                     : "•••"}
@@ -129,8 +158,8 @@ export function PortfolioPerformanceChart({ portfolioId, isPrivate }: Props) {
                   className={`font-semibold ${signColour(metrics.total_return_pct_inception)}`}
                   title={
                     !isPrivate
-                      ? `${withSign(metrics.total_pnl_inception, 0)} ${currency} on ${
-                          metrics.total_ever_invested.toFixed(0)
+                      ? `${withSign(conv(metrics.total_pnl_inception), 0)} ${currency} on ${
+                          conv(metrics.total_ever_invested).toFixed(0)
                         } ${currency} ever invested`
                       : undefined
                   }
@@ -138,7 +167,7 @@ export function PortfolioPerformanceChart({ portfolioId, isPrivate }: Props) {
                   {withSign(metrics.total_return_pct_inception)}%
                   {!isPrivate && (
                     <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                      ({withSign(metrics.total_pnl_inception, 0)} {currency})
+                      ({withSign(conv(metrics.total_pnl_inception), 0)} {currency})
                     </span>
                   )}
                 </p>
