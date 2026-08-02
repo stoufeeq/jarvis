@@ -114,18 +114,69 @@ async def get_portfolio_performance(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Daily market value + cost basis series for the portfolio over `period`.
+    """Daily market value + cost basis series + honest performance metrics.
 
-    Returned as `[{date, market_value, cost_basis}, ...]` in the
-    portfolio's base currency. Empty list if the portfolio has no trades.
+    `points` is [{date, market_value, cost_basis}, ...] for chart drawing.
+
+    `metrics` provides three numbers computable from trade + market data
+    alone — no phantom deposit assumptions:
+      - unrealised_pnl, unrealised_pnl_pct: end-of-period mv − cb, ratio to cb.
+      - realised_pnl_period: sells' P&L within the selected timeframe.
+      - realised_pnl_all_time: cumulative realised P&L.
+      - total_ever_invested: sum of every buy's (qty×price + fees) FX-normalised.
+      - total_pnl_inception, total_return_pct_inception: (realised_all_time
+        + unrealised) as a ratio to total_ever_invested. The honest "return
+        on money deployed" that doesn't need external deposit tracking.
     """
+    from datetime import datetime as _dt
+
     svc = PortfolioService(db)
     p = await svc.get(portfolio_id)
     if not p:
         raise NotFoundError("Portfolio not found")
     _assert_owner(p, user)
+
     curve = await svc.compute_equity_curve(p, period=period)
-    return {"portfolio_id": portfolio_id, "currency": p.currency, "period": period, "points": curve}
+
+    # First point's date bounds the "realised in this period" window.
+    period_start = None
+    if curve:
+        period_start = _dt.strptime(curve[0]["date"], "%Y-%m-%d").date()
+
+    inv = await svc.compute_investment_summary(p, period_start=period_start)
+
+    # End-of-period unrealised — the last point on the curve. If empty
+    # (no trades at all), everything's zero.
+    if curve:
+        last = curve[-1]
+        mv = float(last["market_value"])
+        cb = float(last["cost_basis"])
+    else:
+        mv = cb = 0.0
+    unrealised_pnl = mv - cb
+    unrealised_pnl_pct = (unrealised_pnl / cb * 100) if cb > 0 else 0.0
+
+    total_pnl_inception = inv["realised_pnl_all_time"] + unrealised_pnl
+    total_ever = inv["total_ever_invested"]
+    total_return_pct_inception = (
+        (total_pnl_inception / total_ever * 100) if total_ever > 0 else 0.0
+    )
+
+    return {
+        "portfolio_id": portfolio_id,
+        "currency": p.currency,
+        "period": period,
+        "points": curve,
+        "metrics": {
+            "unrealised_pnl": round(unrealised_pnl, 2),
+            "unrealised_pnl_pct": round(unrealised_pnl_pct, 2),
+            "realised_pnl_period": round(inv["realised_pnl_period"], 2),
+            "realised_pnl_all_time": round(inv["realised_pnl_all_time"], 2),
+            "total_ever_invested": round(inv["total_ever_invested"], 2),
+            "total_pnl_inception": round(total_pnl_inception, 2),
+            "total_return_pct_inception": round(total_return_pct_inception, 2),
+        },
+    }
 
 
 @router.patch("/{portfolio_id}", response_model=PortfolioRead)

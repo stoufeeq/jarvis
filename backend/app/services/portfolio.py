@@ -1,7 +1,7 @@
 import csv
 import io
 import math
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -378,6 +378,103 @@ class PortfolioService:
             # short/cover: skipped (long-only realised tracking for v1)
 
         return realised_base
+
+    async def compute_investment_summary(
+        self,
+        portfolio: Portfolio,
+        period_start: date | None = None,
+        base_ccy: str | None = None,
+    ) -> dict:
+        """Aggregate performance metrics that DON'T require deposit-tracking.
+
+        Returns:
+          realised_pnl_all_time   — cumulative realised P&L across the whole
+                                    trade ledger (same as compute_realised_pnl).
+          realised_pnl_period     — realised P&L from sells whose traded_at
+                                    is on or after period_start. When
+                                    period_start is None, matches all-time.
+          total_ever_invested     — sum of (buy_qty × buy_price + fees) over
+                                    every BUY in the ledger. The honest
+                                    denominator for "return on money deployed"
+                                    since we don't track external deposits.
+
+        All values FX-converted to base_ccy (defaults to portfolio's).
+        Walks the trade ledger once — same moving-average-cost accounting
+        as compute_realised_pnl, so numbers stay internally consistent.
+        """
+        base = (base_ccy or portfolio.currency or "USD").upper()
+
+        trades_result = await self.db.execute(
+            select(Trade).where(Trade.portfolio_id == portfolio.id)
+            .order_by(Trade.traded_at.asc(), Trade.id.asc())
+        )
+        trades = list(trades_result.scalars().all())
+        if not trades:
+            return {
+                "realised_pnl_all_time": 0.0,
+                "realised_pnl_period": 0.0,
+                "total_ever_invested": 0.0,
+            }
+
+        foreign = list({
+            (t.currency or "USD").upper() for t in trades
+            if (t.currency or "USD").upper() != base
+        })
+        fx_rates: dict[str, float] = {}
+        if foreign:
+            try:
+                fx_rates = await MarketDataService().get_fx_rates(foreign, base=base)
+            except Exception:
+                pass
+
+        def to_base(amount: float, ccy: str) -> float:
+            ccy = (ccy or "USD").upper()
+            if ccy == base:
+                return amount
+            rate = fx_rates.get(ccy)
+            return amount * rate if rate else amount
+
+        state: dict[str, tuple[float, float]] = {}
+        realised_all_time = 0.0
+        realised_period = 0.0
+        total_ever_invested = 0.0
+
+        for t in trades:
+            ticker = t.ticker
+            qty = float(t.quantity)
+            price = float(t.price)
+            fees = float(t.fees or 0)
+            ccy = (t.currency or "USD").upper()
+            running_qty, running_avg = state.get(ticker, (0.0, 0.0))
+
+            if t.action == TradeAction.buy:
+                # Every dollar committed to a buy counts toward the "ever
+                # invested" total. Sells later don't reduce this — they
+                # add to realised_pnl instead, which is the parallel line.
+                total_ever_invested += to_base(qty * price + fees, ccy)
+                new_qty = running_qty + qty
+                if new_qty > 0:
+                    new_avg = ((running_qty * running_avg) + (qty * price) + fees) / new_qty
+                    state[ticker] = (new_qty, new_avg)
+            elif t.action == TradeAction.sell:
+                if running_qty <= 0:
+                    continue
+                sell_qty = min(qty, running_qty)
+                realised_trade_ccy = (price - running_avg) * sell_qty - fees
+                realised_base = to_base(realised_trade_ccy, ccy)
+                realised_all_time += realised_base
+                # Period bucket: only include sells whose date falls in
+                # the requested window. Compares naive date parts to
+                # side-step tz issues.
+                if period_start is None or t.traded_at.date() >= period_start:
+                    realised_period += realised_base
+                state[ticker] = (running_qty - sell_qty, running_avg)
+
+        return {
+            "realised_pnl_all_time": realised_all_time,
+            "realised_pnl_period": realised_period,
+            "total_ever_invested": total_ever_invested,
+        }
 
     async def compute_equity_curve(
         self,

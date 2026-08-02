@@ -21,11 +21,22 @@ interface Point {
   cost_basis: number;
 }
 
+interface PerformanceMetrics {
+  unrealised_pnl: number;
+  unrealised_pnl_pct: number;
+  realised_pnl_period: number;
+  realised_pnl_all_time: number;
+  total_ever_invested: number;
+  total_pnl_inception: number;
+  total_return_pct_inception: number;
+}
+
 interface PerformanceResponse {
   portfolio_id: number;
   currency: string;
   period: string;
   points: Point[];
+  metrics?: PerformanceMetrics;
 }
 
 const PERIODS: { label: string; value: string }[] = [
@@ -60,37 +71,81 @@ export function PortfolioPerformanceChart({ portfolioId, isPrivate }: Props) {
   // Pick a tick interval that yields roughly 6 visible date labels.
   const tickInterval = points.length > 6 ? Math.floor(points.length / 6) : 0;
 
-  const first = points[0];
-  const last = points[points.length - 1];
-  const totalReturn =
-    first && last && first.market_value > 0
-      ? ((last.market_value - first.market_value) / first.market_value) * 100
-      : null;
-  const absChange = first && last ? last.market_value - first.market_value : null;
+  const metrics = data?.metrics;
+
+  // Helper to render a coloured signed number/percent pair.
+  const signColour = (v: number) =>
+    v > 0 ? "text-emerald-500" : v < 0 ? "text-red-500" : "text-muted-foreground";
+  const withSign = (v: number, decimals = 2) =>
+    (v >= 0 ? "+" : "") + v.toFixed(decimals);
 
   return (
     <div className="rounded-xl border border-border/50 bg-card p-4 space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
+        <div className="min-w-0">
           <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
             Performance
           </h3>
-          {totalReturn != null && absChange != null && (
-            <div className="flex items-baseline gap-3 mt-1">
-              <span
-                className={`text-lg font-bold ${
-                  totalReturn >= 0 ? "text-emerald-500" : "text-red-500"
-                }`}
-              >
-                {totalReturn >= 0 ? "+" : ""}
-                {totalReturn.toFixed(2)}%
-              </span>
-              {!isPrivate && (
-                <span className="text-sm text-muted-foreground">
-                  ({absChange >= 0 ? "+" : ""}
-                  {formatCurrency(absChange, currency)} over period)
-                </span>
-              )}
+          {metrics && (
+            <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-1 text-sm">
+              {/* 1. Unrealised — current mv−cb for still-open positions */}
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Unrealised
+                </p>
+                <p className={`font-semibold ${signColour(metrics.unrealised_pnl_pct)}`}>
+                  {withSign(metrics.unrealised_pnl_pct)}%
+                  {!isPrivate && (
+                    <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                      ({withSign(metrics.unrealised_pnl, 0)} {currency})
+                    </span>
+                  )}
+                </p>
+                <p className="text-[10px] text-muted-foreground">on held positions</p>
+              </div>
+
+              {/* 2. Realised in this period only — sells' P&L */}
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Realised ({period})
+                </p>
+                <p className={`font-semibold ${signColour(metrics.realised_pnl_period)}`}>
+                  {!isPrivate
+                    ? `${metrics.realised_pnl_period >= 0 ? "+" : ""}${formatCurrency(
+                        metrics.realised_pnl_period,
+                        currency,
+                      )}`
+                    : "•••"}
+                </p>
+                <p className="text-[10px] text-muted-foreground">from sells in this window</p>
+              </div>
+
+              {/* 3. Total return since inception — the honest % */}
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Total return
+                </p>
+                <p
+                  className={`font-semibold ${signColour(metrics.total_return_pct_inception)}`}
+                  title={
+                    !isPrivate
+                      ? `${withSign(metrics.total_pnl_inception, 0)} ${currency} on ${
+                          metrics.total_ever_invested.toFixed(0)
+                        } ${currency} ever invested`
+                      : undefined
+                  }
+                >
+                  {withSign(metrics.total_return_pct_inception)}%
+                  {!isPrivate && (
+                    <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                      ({withSign(metrics.total_pnl_inception, 0)} {currency})
+                    </span>
+                  )}
+                </p>
+                <p className="text-[10px] text-muted-foreground">
+                  realised + unrealised ÷ every $ ever bought with
+                </p>
+              </div>
             </div>
           )}
         </div>
