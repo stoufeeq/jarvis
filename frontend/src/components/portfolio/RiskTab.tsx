@@ -14,6 +14,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { portfolioApi } from "@/lib/api";
 
+interface RiskContribution {
+  ticker: string;
+  weight_pct: number; // share of top-holdings market value
+  risk_pct: number;   // share of top-holdings portfolio variance
+}
+
 interface RiskResponse {
   sharpe_30d: number | null;
   sharpe_90d: number | null;
@@ -27,6 +33,8 @@ interface RiskResponse {
     matrix: number[][];
   };
   diversification_score: number | null;
+  weighted_diversification_score: number | null;
+  risk_contributions: RiskContribution[];
   returns_period_days: number;
 }
 
@@ -158,10 +166,77 @@ export function RiskTab({ portfolioId }: Props) {
             valueClass={(data.diversification_score ?? 1) >= 0.7 ? "text-red-400"
               : (data.diversification_score ?? 1) >= 0.4 ? "text-amber-400"
               : "text-emerald-400"}
-            hint="Avg pairwise correlation of top holdings. 0 = diversified, 1 = all one bet."
+            hint="Avg pairwise correlation of top holdings (unweighted). Behaviour of stocks, ignoring how much of each you hold."
+          />
+          <Metric
+            label="Diversification (weighted)"
+            value={data.weighted_diversification_score != null
+              ? data.weighted_diversification_score.toFixed(2)
+              : "—"}
+            valueClass={(data.weighted_diversification_score ?? 1) >= 0.7 ? "text-red-400"
+              : (data.weighted_diversification_score ?? 1) >= 0.4 ? "text-amber-400"
+              : "text-emerald-400"}
+            hint="Same but weighted by position size. Your actual concentration, given how much of each you hold. Big + correlated positions inflate this."
           />
         </div>
       </div>
+
+      {/* ── Position risk contribution ─────────────────────────── */}
+      {data.risk_contributions && data.risk_contributions.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+            Risk contribution
+          </h3>
+          <div className="rounded-lg border border-border bg-card p-3 space-y-1.5">
+            {data.risk_contributions.map((rc) => {
+              // Bar width is proportional to risk_pct. The largest bar
+              // in the list is scaled to a comfortable 90% max so the
+              // relative comparison stays readable.
+              const maxRisk = Math.max(...data.risk_contributions.map((r) => r.risk_pct));
+              const barWidth = maxRisk > 0 ? (rc.risk_pct / maxRisk) * 90 : 0;
+              // "Amplifier": risk / weight > 1 means the position adds
+              // more risk than its dollar footprint alone would predict
+              // (usually a high-vol name). < 1 means it's a low-vol
+              // stabiliser relative to size.
+              const amp = rc.weight_pct > 0 ? rc.risk_pct / rc.weight_pct : 1;
+              const ampColour =
+                amp >= 1.3 ? "text-red-400" :
+                amp >= 1.1 ? "text-amber-400" :
+                amp <= 0.7 ? "text-emerald-400" : "text-muted-foreground";
+              return (
+                <div key={rc.ticker} className="flex items-center gap-3 text-xs">
+                  <span className="w-12 font-semibold tabular-nums">{rc.ticker}</span>
+                  <div className="flex-1 relative h-4 rounded bg-secondary/40 overflow-hidden">
+                    <div
+                      className="absolute inset-y-0 left-0 bg-amber-500/40"
+                      style={{ width: `${barWidth}%` }}
+                    />
+                  </div>
+                  <span className="w-16 text-right tabular-nums font-semibold">
+                    {rc.risk_pct.toFixed(1)}%
+                  </span>
+                  <span className="w-14 text-right tabular-nums text-muted-foreground text-[11px]">
+                    ({rc.weight_pct.toFixed(1)}% $)
+                  </span>
+                  <span
+                    className={`w-14 text-right tabular-nums text-[11px] ${ampColour}`}
+                    title="risk_pct ÷ weight_pct: >1 means this position is a risk amplifier for its size"
+                  >
+                    ×{amp.toFixed(2)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            Each bar = share of the top holdings&apos; total portfolio variance. Columns:
+            <strong className="text-foreground"> risk %</strong> = variance contribution,
+            <span className="text-muted-foreground"> ($) </span>= its share of market value,
+            <strong className="text-foreground"> ×N </strong>= amplifier
+            (red &gt; 1.3 means the position contributes more risk than dollars alone imply — high-vol name).
+          </p>
+        </div>
+      )}
 
       {/* ── Correlation matrix ──────────────────────────────────── */}
       {tickers.length >= 2 ? (

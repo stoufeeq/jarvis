@@ -779,6 +779,67 @@ class PortfolioService:
                                 pairs.append(v)
                     diversification_score = float(sum(pairs) / len(pairs)) if pairs else None
 
+        # ── Weighted diversification + per-position risk contribution ──
+        # Both use MPT covariance math:
+        #   Σ_ij = σ_i * σ_j * ρ_ij               (covariance matrix)
+        #   portfolio_variance = w^T Σ w          (scalar)
+        #   marginal_i = (Σ w)_i                  (marginal-to-variance)
+        #   risk_contrib_i = w_i * marginal_i / portfolio_variance
+        # RC sums to 1 by construction — natural "% of variance" breakdown.
+        #
+        # Weighted diversification: Σ_{i≠j} w_i w_j ρ_ij / Σ_{i≠j} w_i w_j.
+        # Same 0–1 scale as the unweighted mean, but reflects actual
+        # position sizes — a 1-share sliver doesn't get equal billing
+        # with your 230-share whale.
+        weighted_diversification: float | None = None
+        risk_contributions: list[dict] = []
+
+        if corr_tickers and len(corr_tickers) >= 2 and corr_matrix:
+            mv_map = dict(with_mv)
+            weights_native = [mv_map.get(t, 0.0) for t in corr_tickers]
+            total_w = sum(weights_native)
+            if total_w > 0:
+                # Normalise weights within the correlation subset. Numbers
+                # sum to 100% — a "share of top-holdings risk" reading.
+                weights = np.array([w / total_w for w in weights_native])
+
+                # Per-ticker annualised volatility from the fetched return
+                # series (same window as the correlations).
+                vols_list: list[float] = []
+                for t in corr_tickers:
+                    s = series_map[t]
+                    v = float(s.std() * (252 ** 0.5)) if len(s) >= 5 else 0.0
+                    vols_list.append(v)
+                vols = np.array(vols_list)
+
+                R = np.array(corr_matrix)
+                cov = np.outer(vols, vols) * R  # Σ_ij
+                port_var = float(weights @ cov @ weights)
+
+                if port_var > 0:
+                    marginal = cov @ weights           # shape (n,)
+                    rc = weights * marginal / port_var # shape (n,), sums to 1
+                    risk_contributions = sorted(
+                        [
+                            {
+                                "ticker": corr_tickers[i],
+                                "weight_pct": round(float(weights[i]) * 100, 2),
+                                "risk_pct": round(float(rc[i]) * 100, 2),
+                            }
+                            for i in range(len(corr_tickers))
+                        ],
+                        key=lambda x: -x["risk_pct"],
+                    )
+
+                # Weighted diversification: only meaningful with 2+ pos.
+                sum_wiwj_offdiag = 1.0 - float(np.sum(weights ** 2))
+                if sum_wiwj_offdiag > 0:
+                    w_ij = np.outer(weights, weights)
+                    # Zero the diagonal so we only sum off-diagonal pairs.
+                    np.fill_diagonal(w_ij, 0.0)
+                    numer = float(np.sum(w_ij * R))
+                    weighted_diversification = numer / sum_wiwj_offdiag
+
         return {
             "sharpe_30d": round(sharpe_30d, 3) if sharpe_30d is not None else None,
             "sharpe_90d": round(sharpe_90d, 3) if sharpe_90d is not None else None,
@@ -795,6 +856,10 @@ class PortfolioService:
             "diversification_score": (
                 round(diversification_score, 3) if diversification_score is not None else None
             ),
+            "weighted_diversification_score": (
+                round(weighted_diversification, 3) if weighted_diversification is not None else None
+            ),
+            "risk_contributions": risk_contributions,
             "returns_period_days": len(r),
         }
 
