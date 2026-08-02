@@ -614,6 +614,189 @@ class PortfolioService:
 
         return curve
 
+    async def compute_risk_metrics(
+        self,
+        portfolio: Portfolio,
+        base_ccy: str | None = None,
+    ) -> dict:
+        """Portfolio-level risk analytics.
+
+        Returns:
+          sharpe_30d / 90d / 365d
+            Annualised Sharpe over the trailing window. Risk-free rate
+            assumed = 0 for simplicity (add it later if needed — swings
+            Sharpe by ~0.1 at current rates). Uses simple daily returns
+            of the equity curve. N/A (None) when the window has < 10
+            data points, because Sharpe on a tiny sample is meaningless.
+
+          max_drawdown_pct
+            Peak-to-trough on the equity curve over the full available
+            history. Negative % (drawdowns are drops).
+
+          volatility_30d_pct
+            Annualised std of the last 30 daily returns × 100.
+
+          beta_spy / alpha_90d_pct
+            OLS beta of portfolio returns vs SPY over 90d; alpha is the
+            annualised residual return (portfolio - beta*SPY).
+
+          correlation
+            {tickers: [...], matrix: [[...]]} for the top-15 holdings
+            by current market value. Off-diagonal entries are pairwise
+            90d daily-return correlations. Diagonals are 1.0.
+
+          diversification_score
+            Mean of off-diagonal correlations. 0 = perfectly diversified,
+            1 = every holding moves in lockstep. Bigger = more concentrated.
+
+        All metrics are unitless or in %, so no FX conversion is needed
+        on the frontend — the values are currency-independent.
+        """
+        import numpy as np
+        import pandas as pd
+
+        base = (base_ccy or portfolio.currency or "USD").upper()
+
+        # ── Portfolio equity curve as a daily-returns series ────────────
+        # Use 1y so the 365d Sharpe has enough data. compute_equity_curve
+        # walks trades chronologically and values holdings at daily closes.
+        curve = await self.compute_equity_curve(portfolio, period="1y", base_ccy=base)
+        empty = {
+            "sharpe_30d": None, "sharpe_90d": None, "sharpe_365d": None,
+            "max_drawdown_pct": None, "volatility_30d_pct": None,
+            "beta_spy": None, "alpha_90d_pct": None,
+            "correlation": {"tickers": [], "matrix": []},
+            "diversification_score": None,
+            "returns_period_days": 0,
+        }
+        if len(curve) < 5:
+            return empty
+
+        mv_df = pd.DataFrame(curve)
+        mv_df["date"] = pd.to_datetime(mv_df["date"])
+        mv_df = mv_df.set_index("date").sort_index()
+        mv = mv_df["market_value"].astype(float)
+        # Guard: if the portfolio was ever briefly zero (all sold), we'd
+        # get inf/NaN in returns. Replace zeros with NaN so pct_change
+        # skips them cleanly. Use .gt(0) rather than `mv > 0` because
+        # pyright can't narrow the DataFrame column element type past a
+        # Timestamp/Timedelta possibility even after .astype(float).
+        mv_nz = mv.where(mv.gt(0))
+        r = mv_nz.pct_change().dropna()
+        if len(r) < 5:
+            return empty
+
+        def _annualised_sharpe(returns: pd.Series) -> float | None:
+            if len(returns) < 10 or returns.std() == 0:
+                return None
+            return float(returns.mean() / returns.std() * (252 ** 0.5))
+
+        sharpe_30d = _annualised_sharpe(r.tail(30))
+        sharpe_90d = _annualised_sharpe(r.tail(90))
+        sharpe_365d = _annualised_sharpe(r.tail(365))
+
+        # Max drawdown across full available history.
+        running_peak = mv_nz.cummax()
+        dd = (mv_nz - running_peak) / running_peak
+        max_drawdown_pct = float(dd.min() * 100) if not dd.empty else None
+
+        vol_30d = r.tail(30)
+        volatility_30d_pct = (
+            float(vol_30d.std() * (252 ** 0.5) * 100) if len(vol_30d) >= 5 else None
+        )
+
+        # ── Beta + Alpha vs SPY ─────────────────────────────────────────
+        mds = MarketDataService()
+        try:
+            spy_df = await mds.get_ohlcv_dataframe("SPY", period="1y", interval="1d")
+        except Exception:
+            spy_df = None
+
+        beta_spy: float | None = None
+        alpha_90d_pct: float | None = None
+        if spy_df is not None and not spy_df.empty:
+            spy = spy_df["Close"].dropna()
+            spy.index = pd.to_datetime(spy.index).tz_localize(None).normalize()
+            spy_r = spy.pct_change().dropna()
+            joined = pd.DataFrame({"p": r, "spy": spy_r}).dropna().tail(90)
+            if len(joined) >= 20 and joined["spy"].var() > 0:
+                cov = joined.cov().loc["p", "spy"]
+                var = joined["spy"].var()
+                beta_spy = float(cov / var)
+                # Alpha = mean of daily portfolio return - beta * mean
+                # of daily spy return, then annualised (×252).
+                mean_p = joined["p"].mean()
+                mean_spy = joined["spy"].mean()
+                alpha_daily = mean_p - beta_spy * mean_spy
+                alpha_90d_pct = float(alpha_daily * 252 * 100)
+
+        # ── Correlation matrix (top-15 holdings by market value) ────────
+        positions = await self.list_positions(portfolio.id)
+        # Rank by current market value (needs current_price; skip missing).
+        with_mv: list[tuple[str, float]] = []
+        for p in positions:
+            if float(p.quantity) <= 0 or p.current_price is None:
+                continue
+            with_mv.append((p.ticker, float(p.quantity) * float(p.current_price)))
+        with_mv.sort(key=lambda x: -x[1])
+        top_tickers = [t for t, _ in with_mv[:15]]
+
+        corr_tickers: list[str] = []
+        corr_matrix: list[list[float]] = []
+        diversification_score: float | None = None
+
+        if len(top_tickers) >= 2:
+            # Fan out daily-close fetches (~1s each) so 15 tickers take
+            # a few seconds rather than 15+.
+            async def _fetch_returns(ticker: str) -> tuple[str, pd.Series]:
+                try:
+                    df = await mds.get_ohlcv_dataframe(ticker, period="3mo", interval="1d")
+                    if df is None or df.empty:
+                        return ticker, pd.Series(dtype=float)
+                    closes = df["Close"].dropna()
+                    closes.index = pd.to_datetime(closes.index).tz_localize(None).normalize()
+                    return ticker, closes.pct_change().dropna()
+                except Exception:
+                    return ticker, pd.Series(dtype=float)
+
+            results = await asyncio.gather(*(_fetch_returns(t) for t in top_tickers))
+            series_map = {t: s for t, s in results if not s.empty}
+            corr_tickers = [t for t in top_tickers if t in series_map]
+
+            if len(corr_tickers) >= 2:
+                aligned = pd.DataFrame({t: series_map[t] for t in corr_tickers}).dropna()
+                if len(aligned) >= 10:
+                    m = aligned.corr()
+                    corr_matrix = m.reindex(index=corr_tickers, columns=corr_tickers).values.tolist()
+                    # Average of strict upper-triangle (each pair once).
+                    n = len(corr_tickers)
+                    pairs = []
+                    for i in range(n):
+                        for j in range(i + 1, n):
+                            v = corr_matrix[i][j]
+                            if np.isfinite(v):
+                                pairs.append(v)
+                    diversification_score = float(sum(pairs) / len(pairs)) if pairs else None
+
+        return {
+            "sharpe_30d": round(sharpe_30d, 3) if sharpe_30d is not None else None,
+            "sharpe_90d": round(sharpe_90d, 3) if sharpe_90d is not None else None,
+            "sharpe_365d": round(sharpe_365d, 3) if sharpe_365d is not None else None,
+            "max_drawdown_pct": round(max_drawdown_pct, 2) if max_drawdown_pct is not None else None,
+            "volatility_30d_pct": round(volatility_30d_pct, 2) if volatility_30d_pct is not None else None,
+            "beta_spy": round(beta_spy, 3) if beta_spy is not None else None,
+            "alpha_90d_pct": round(alpha_90d_pct, 2) if alpha_90d_pct is not None else None,
+            "correlation": {
+                "tickers": corr_tickers,
+                # Round for wire-size + display sanity.
+                "matrix": [[round(v, 3) for v in row] for row in corr_matrix],
+            },
+            "diversification_score": (
+                round(diversification_score, 3) if diversification_score is not None else None
+            ),
+            "returns_period_days": len(r),
+        }
+
     async def get_summary(self, portfolio: Portfolio) -> PortfolioSummary:
         positions = await self.list_positions(portfolio.id)
         base_ccy = (portfolio.currency or "USD").upper()

@@ -179,6 +179,24 @@ async def get_portfolio_performance(
     }
 
 
+@router.get("/{portfolio_id}/risk")
+async def get_portfolio_risk(
+    portfolio_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Portfolio-level risk analytics: Sharpe, drawdown, volatility,
+    beta/alpha vs SPY, and a correlation matrix of the top holdings.
+
+    See PortfolioService.compute_risk_metrics for the exact definitions."""
+    svc = PortfolioService(db)
+    p = await svc.get(portfolio_id)
+    if not p:
+        raise NotFoundError("Portfolio not found")
+    _assert_owner(p, user)
+    return await svc.compute_risk_metrics(p)
+
+
 @router.patch("/{portfolio_id}", response_model=PortfolioRead)
 async def update_portfolio(
     portfolio_id: int,
