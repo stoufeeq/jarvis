@@ -652,6 +652,7 @@ class PortfolioService:
         All metrics are unitless or in %, so no FX conversion is needed
         on the frontend — the values are currency-independent.
         """
+        import asyncio
         import numpy as np
         import pandas as pd
 
