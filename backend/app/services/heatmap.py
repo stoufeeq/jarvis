@@ -14,20 +14,30 @@ Two data sources, used independently:
 
 fast_info is per-ticker (no batch endpoint), so we parallelise with a
 ThreadPoolExecutor. Combined with the volume fetch, a cold heatmap takes
-~10-15s; warm hits return from the 30-min in-process cache instantly.
+~10-15s; warm hits return from Redis instantly.
+
+Cache lives in Redis (not a per-process dict) so the celery-worker's
+30-min pre-warm task and the API backend share the same data. Without
+this, the backend's own cache stays cold and every dashboard hit paid
+the 10-15s fetch cost until the backend itself happened to warm it.
 """
 
 import asyncio
+import json
 import logging
 import math
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+import redis.asyncio as aioredis
+
+from app.config import get_settings
 from app.data.sp500 import SP500
 
 log = logging.getLogger(__name__)
 
+CACHE_KEY = "heatmap:sp500"
 CACHE_TTL = 1800  # 30 minutes — aligned with frontend staleTime and Celery pre-warm interval
 
 # fast_info per-ticker is sequential by default. yfinance's underlying
@@ -35,20 +45,53 @@ CACHE_TTL = 1800  # 30 minutes — aligned with frontend staleTime and Celery pr
 # rate-limit issues in practice.
 FAST_INFO_WORKERS = 10
 
-_cache: dict[str, Any] = {}
+# Lazy-inited shared Redis client per process. aioredis clients have an
+# internal connection pool so reusing one across calls is the right
+# pattern — creating a fresh one each call would burn TCP handshakes.
+_redis_client: aioredis.Redis | None = None
+
+
+def _redis() -> aioredis.Redis:
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = aioredis.from_url(
+            get_settings().redis_url, decode_responses=True,
+        )
+    return _redis_client
+
+
+async def _cache_get() -> dict | None:
+    """Return the cached heatmap payload, or None on miss / any Redis
+    failure. Redis-down is treated as a cache miss — same effect as an
+    empty cache today, so nothing regresses if Redis goes offline."""
+    try:
+        raw = await _redis().get(CACHE_KEY)
+        if raw:
+            return json.loads(raw)
+        return None
+    except Exception:
+        log.warning("Redis GET failed on heatmap cache — treating as miss", exc_info=True)
+        return None
+
+
+async def _cache_set(data: dict) -> None:
+    try:
+        await _redis().set(CACHE_KEY, json.dumps(data), ex=CACHE_TTL)
+    except Exception:
+        log.warning("Redis SET failed on heatmap cache — next call will refetch", exc_info=True)
 
 
 class HeatmapService:
     async def get_sp500_heatmap(self, force_refresh: bool = False) -> dict:
         if not force_refresh:
-            cached = _cache.get("sp500")
-            if cached and (time.monotonic() - cached["ts"]) < CACHE_TTL:
-                return cached["data"]
+            cached = await _cache_get()
+            if cached:
+                return cached
 
         loop = asyncio.get_event_loop()
         data = await loop.run_in_executor(None, _fetch_heatmap_sync)
 
-        _cache["sp500"] = {"ts": time.monotonic(), "data": data}
+        await _cache_set(data)
         return data
 
 
