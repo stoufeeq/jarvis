@@ -301,8 +301,17 @@ def _print_per_ticker(per_ticker: pd.DataFrame, top_n: int = 20) -> None:
               f"{arrow}{row['delta_sharpe']:>+7.2f}")
 
 
-def _print_gated_simulation(pooled: pd.DataFrame, gate_regime: str) -> None:
-    """Simulate: 'only trade nights where regime == gate_regime'.
+def _print_gated_simulation(
+    pooled: pd.DataFrame,
+    gate_regime: str | None = None,
+    exclude_regimes: list[str] | None = None,
+) -> None:
+    """Simulate a regime gate.
+
+    Two modes:
+      - Positive gate (`gate_regime`): trade ONLY when regime == that.
+      - Negative gate (`exclude_regimes`): trade EVERY night EXCEPT
+        when regime is in this set.
 
     Reports mean-per-night, Sharpe, annualised mean return, hit-rate, and
     activity%. We deliberately do NOT compound the pooled return series —
@@ -310,12 +319,18 @@ def _print_gated_simulation(pooled: pd.DataFrame, gate_regime: str) -> None:
     all ticker-nights as a single sequential portfolio, which is meaningless
     (produced 10²² total returns in the first version). Annualised
     mean × 252 is the honest "typical strategy return" number."""
+    if exclude_regimes:
+        label = f"trade EXCEPT when regime in {exclude_regimes}"
+        gated = pooled[~pooled["regime"].isin(exclude_regimes)]["return"]
+    else:
+        label = f"trade only when regime == {gate_regime}"
+        gated = pooled[pooled["regime"] == gate_regime]["return"]
+
     print(f"\n{_hr()}")
-    print(f" GATED STRATEGY SIMULATION — trade only when regime == {gate_regime}")
+    print(f" GATED STRATEGY SIMULATION — {label}")
     print(_hr())
 
     unconditional = pooled["return"]
-    gated = pooled[pooled["regime"] == gate_regime]["return"]
 
     def _stats(r: pd.Series) -> tuple[float, float, float, float]:
         if len(r) == 0:
@@ -390,7 +405,15 @@ async def main():
     parser.add_argument("--skip-watchlist", action="store_true")
     parser.add_argument(
         "--gate-regime", default=None,
-        help="Simulate gated strategy on this regime. Defaults to pooled-best.",
+        help="POSITIVE gate: only trade this regime. Defaults to pooled-best "
+             "by sharpe × sqrt(activity).",
+    )
+    parser.add_argument(
+        "--exclude-regimes", default=None,
+        help="NEGATIVE gate: comma-separated regimes to SKIP (trade every "
+             "night except these). Complementary to --gate-regime; use one or "
+             "the other. E.g. --exclude-regimes bear_low_vol,bear_crisis "
+             "avoids the two worst-performing regimes at ~4%% activity cost.",
     )
     parser.add_argument(
         "--min-nights-per-regime", type=int, default=100,
@@ -451,14 +474,18 @@ async def main():
     per_ticker = _per_ticker_regime_best(pooled, min_nights_per_regime=args.min_nights_per_regime)
     _print_per_ticker(per_ticker)
 
-    # Pick gate: user override, else best "utility" = sharpe × sqrt(activity_frac).
-    # Rationale: a Sharpe-1.5 regime active 3% of the time is a worse strategy
-    # than a Sharpe-1.0 regime active 75% of the time — sqrt(activity)
-    # is the standard adjustment for how much of the Sharpe you actually
-    # capture given the time you spend in market.
-    if args.gate_regime:
-        gate = args.gate_regime
+    # Route between positive gate, negative gate, and auto-pick.
+    if args.exclude_regimes:
+        excluded = [r.strip() for r in args.exclude_regimes.split(",") if r.strip()]
+        _print_gated_simulation(pooled, exclude_regimes=excluded)
+    elif args.gate_regime:
+        _print_gated_simulation(pooled, gate_regime=args.gate_regime)
     else:
+        # Auto-pick a POSITIVE gate: best "utility" = sharpe × sqrt(activity_frac).
+        # Rationale: a Sharpe-1.5 regime active 3% of the time is a worse strategy
+        # than a Sharpe-1.0 regime active 75% of the time — sqrt(activity)
+        # is the standard adjustment for how much of the Sharpe you actually
+        # capture given the time you spend in market.
         total_nights = sum(s.n_nights for s in pooled_stats)
         def _utility(s: RegimeStat) -> float:
             if s.n_nights < 200 or s.sharpe <= 0:
@@ -467,7 +494,7 @@ async def main():
             return s.sharpe * (activity_frac ** 0.5)
         scored = sorted(pooled_stats, key=_utility, reverse=True)
         gate = scored[0].regime if _utility(scored[0]) > 0 else pooled_stats[0].regime
-    _print_gated_simulation(pooled, gate)
+        _print_gated_simulation(pooled, gate_regime=gate)
 
     _print_legend()
 
