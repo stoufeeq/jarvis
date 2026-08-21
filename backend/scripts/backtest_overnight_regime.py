@@ -422,6 +422,14 @@ async def main():
              "with only 35 nights per ticker gave flatteringly high Sharpes just "
              "from small-sample noise. 100+ is credible.",
     )
+    parser.add_argument(
+        "--cost-bps", type=float, default=0.0,
+        help="Round-trip cost in basis points (1 bp = 0.01%%). Subtracted from "
+             "every overnight return before stats are computed. Combine commission "
+             "+ bid-ask spread. Example values: SPY at $10k trade ≈ 3 bps; single "
+             "megacap ≈ 5-7 bps; small AI names ≈ 10-20 bps. Fixed IBKR $2.09/rt "
+             "at $5k trade size = 4.2 bps; at $10k = 2.1 bps.",
+    )
     args = parser.parse_args()
 
     user_id = await _resolve_user(args.email, args.user_id)
@@ -462,8 +470,20 @@ async def main():
         raise SystemExit("No tickers returned usable data.")
 
     pooled = pd.concat(kept, ignore_index=False)
-    pooled = pooled[["ticker", "return", "regime"]]
+    pooled = pooled[["ticker", "return", "regime"]].copy()
     print(f"Pooled: {len(pooled):,} ticker-nights across {pooled['ticker'].nunique()} tickers.")
+
+    # Apply per-round-trip cost (if set). The overnight strategy is
+    # ONE round-trip per night: buy at close, sell at next open.
+    # Subtracting cost_bps/10000 from each return gives net-of-cost
+    # returns; every downstream stat (Sharpe, mean, cum) then reflects
+    # what you'd actually keep after commission + spread.
+    if args.cost_bps > 0:
+        pooled["return"] = pooled["return"] - args.cost_bps / 10000
+        print(
+            f"Cost model: subtracting {args.cost_bps:.1f} bps per round-trip. "
+            f"All downstream stats are NET of cost."
+        )
 
     # ── Report ──────────────────────────────────────────────────────
     _print_regime_distribution(regime_series, args.period)
