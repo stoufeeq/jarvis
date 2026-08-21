@@ -303,7 +303,13 @@ def _print_per_ticker(per_ticker: pd.DataFrame, top_n: int = 20) -> None:
 
 def _print_gated_simulation(pooled: pd.DataFrame, gate_regime: str) -> None:
     """Simulate: 'only trade nights where regime == gate_regime'.
-    Report combined stats of trades taken (vs all-trades baseline)."""
+
+    Reports mean-per-night, Sharpe, annualised mean return, hit-rate, and
+    activity%. We deliberately do NOT compound the pooled return series —
+    pooled contains one row per (ticker, night), so compounding treats
+    all ticker-nights as a single sequential portfolio, which is meaningless
+    (produced 10²² total returns in the first version). Annualised
+    mean × 252 is the honest "typical strategy return" number."""
     print(f"\n{_hr()}")
     print(f" GATED STRATEGY SIMULATION — trade only when regime == {gate_regime}")
     print(_hr())
@@ -318,26 +324,32 @@ def _print_gated_simulation(pooled: pd.DataFrame, gate_regime: str) -> None:
         return (
             float(r.mean() * 100),                                          # mean/night %
             float(r.mean() / s * (252 ** 0.5)) if s > 0 else 0.0,           # sharpe
-            float((r > 0).sum() / len(r) * 100),                            # hit
-            float(((1 + r).prod() - 1) * 100),                              # cum %
+            float((r > 0).sum() / len(r) * 100),                            # hit%
+            float(r.mean() * 252 * 100),                                    # annualised mean %
         )
 
-    m_u, sh_u, hit_u, cum_u = _stats(unconditional)
-    m_g, sh_g, hit_g, cum_g = _stats(gated)
+    m_u, sh_u, hit_u, ann_u = _stats(unconditional)
+    m_g, sh_g, hit_g, ann_g = _stats(gated)
 
     activity_pct = (len(gated) / len(unconditional) * 100) if len(unconditional) else 0
-    print(f"  {'':<15} {'Mean/d%':>10} {'Sharpe':>8} {'Hit%':>7} {'Cum%':>10} {'Activity%':>11}")
-    print("  " + "─" * 66)
-    print(f"  {'Unconditional':<15} {m_u:>10.4f} {sh_u:>8.2f} {hit_u:>7.1f} {cum_u:>10,.1f} {100.0:>10.1f}%")
-    print(f"  {'Gated':<15} {m_g:>10.4f} {sh_g:>8.2f} {hit_g:>7.1f} {cum_g:>10,.1f} {activity_pct:>10.1f}%")
+    # "In-market" return: gated strategy is only in position on gate
+    # nights, so its expected annualised gross return is the gate's
+    # mean × (activity × 252). This is what your account actually earns.
+    in_market_g = m_g * activity_pct / 100 * 252
+    print(f"  {'':<15} {'Mean/d%':>10} {'Sharpe':>8} {'Hit%':>7} {'Ann.Mean%':>11} {'Activity%':>11}")
+    print("  " + "─" * 68)
+    print(f"  {'Unconditional':<15} {m_u:>10.4f} {sh_u:>8.2f} {hit_u:>7.1f} {ann_u:>11.2f} {100.0:>10.1f}%")
+    print(f"  {'Gated (in-mkt)':<15} {m_g:>10.4f} {sh_g:>8.2f} {hit_g:>7.1f} {ann_g:>11.2f} {activity_pct:>10.1f}%")
     print()
     print(f"  Interpretation:")
     print(f"    • Δ Sharpe (gated − unconditional) = {sh_g - sh_u:+.2f}")
-    print(f"    • Gate is 'on' {activity_pct:.0f}% of the time — you'd be in cash the rest.")
+    print(f"    • Gate is 'on' {activity_pct:.0f}% of the time — you'd be flat the rest.")
+    print(f"    • Effective annualised gross return of gated strategy: {in_market_g:.2f}%")
+    print(f"      (gate's mean/d × activity × 252 — accounts for time in cash).")
     if sh_g > sh_u and activity_pct >= 20:
         print(f"    • ✓ Gated version is more risk-efficient with meaningful activity.")
     elif sh_g > sh_u:
-        print(f"    • ⚠ Gated Sharpe higher but activity is low — carry cost matters.")
+        print(f"    • ⚠ Gated Sharpe higher but activity is low — opportunity cost matters.")
     else:
         print(f"    • ✗ Gate does not improve risk-adjusted returns. Regime doesn't help here.")
 
@@ -381,8 +393,11 @@ async def main():
         help="Simulate gated strategy on this regime. Defaults to pooled-best.",
     )
     parser.add_argument(
-        "--min-nights-per-regime", type=int, default=30,
-        help="Min nights required for a regime to be considered 'best' per ticker",
+        "--min-nights-per-regime", type=int, default=100,
+        help="Min nights required for a regime to be considered 'best' per ticker. "
+             "Raised from 30 after the first run showed cherry-picking: a regime "
+             "with only 35 nights per ticker gave flatteringly high Sharpes just "
+             "from small-sample noise. 100+ is credible.",
     )
     args = parser.parse_args()
 
@@ -436,12 +451,22 @@ async def main():
     per_ticker = _per_ticker_regime_best(pooled, min_nights_per_regime=args.min_nights_per_regime)
     _print_per_ticker(per_ticker)
 
-    # Pick gate: user override, else pooled-best Sharpe with n>=100 (avoid tiny-sample winners).
+    # Pick gate: user override, else best "utility" = sharpe × sqrt(activity_frac).
+    # Rationale: a Sharpe-1.5 regime active 3% of the time is a worse strategy
+    # than a Sharpe-1.0 regime active 75% of the time — sqrt(activity)
+    # is the standard adjustment for how much of the Sharpe you actually
+    # capture given the time you spend in market.
     if args.gate_regime:
         gate = args.gate_regime
     else:
-        candidates = [s for s in pooled_stats if s.n_nights >= 100]
-        gate = max(candidates, key=lambda s: s.sharpe).regime if candidates else pooled_stats[0].regime
+        total_nights = sum(s.n_nights for s in pooled_stats)
+        def _utility(s: RegimeStat) -> float:
+            if s.n_nights < 200 or s.sharpe <= 0:
+                return -1.0  # exclude tiny-sample or negative-Sharpe regimes
+            activity_frac = s.n_nights / total_nights
+            return s.sharpe * (activity_frac ** 0.5)
+        scored = sorted(pooled_stats, key=_utility, reverse=True)
+        gate = scored[0].regime if _utility(scored[0]) > 0 else pooled_stats[0].regime
     _print_gated_simulation(pooled, gate)
 
     _print_legend()
