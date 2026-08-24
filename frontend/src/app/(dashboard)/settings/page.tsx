@@ -7,6 +7,7 @@ import { useAuthStore } from "@/store/auth";
 import { useSettingsStore } from "@/store/settings";
 import { useThemeStore, THEMES } from "@/store/theme";
 import toast from "react-hot-toast";
+import { AdminModelsCard } from "./AdminModelsCard";
 
 export default function SettingsPage() {
   const user = useAuthStore((s) => s.user);
@@ -98,6 +99,9 @@ export default function SettingsPage() {
   return (
     <div className="max-w-lg space-y-8">
       <h1 className="text-2xl font-bold">Settings</h1>
+
+      {/* AI Models — admin-only. Backend also gates via require_admin. */}
+      {user?.is_admin && <AdminModelsCard />}
 
       {/* Appearance */}
       <section className="rounded-xl border border-border bg-card p-6 space-y-4">

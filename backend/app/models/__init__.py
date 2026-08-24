@@ -12,6 +12,7 @@ from app.models.portfolio import Portfolio, Position, Trade
 from app.models.signal import Signal
 from app.models.signal_outcome import SignalOutcome
 from app.models.strategy import Strategy, StrategyTrade
+from app.models.system_setting import SystemSetting
 from app.models.user import User
 from app.models.watchlist import Watchlist, WatchlistItem
 

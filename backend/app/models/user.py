@@ -14,6 +14,9 @@ class User(TimestampMixin, Base):
     full_name: Mapped[str | None] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Admin flag — gates access to global-config surfaces such as the LLM
+    # model-selection UI. See app/api/deps.py::require_admin.
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
     # Telegram chat ID for push notifications (alerts, briefing summaries).
     # User obtains this via /start with the configured Telegram bot.
     telegram_chat_id: Mapped[str | None] = mapped_column(String(50))

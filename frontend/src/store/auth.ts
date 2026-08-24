@@ -6,6 +6,7 @@ interface User {
   email: string;
   full_name: string | null;
   telegram_chat_id?: string | null;
+  is_admin?: boolean;
 }
 
 interface AuthState {

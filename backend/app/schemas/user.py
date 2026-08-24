@@ -13,6 +13,7 @@ class UserRead(BaseModel):
     full_name: str | None
     is_active: bool
     is_verified: bool
+    is_admin: bool = False
     telegram_chat_id: str | None = None
 
     model_config = {"from_attributes": True}

@@ -238,3 +238,33 @@ export const briefingApi = {
   get: (id: number) => api.get(`/briefing/${id}`),
   delete: (id: number) => api.delete(`/briefing/${id}`),
 };
+
+// Admin-only. Non-admin users get 403 from every call here — the
+// Settings page hides the whole card so this shouldn't be reached.
+export interface ModelCatalogEntry {
+  id: string;
+  provider: "gemini" | "openrouter";
+  label: string;
+  tier: "free" | "cheap" | "premium";
+  notes: string;
+  price_hint: string;
+  available: boolean;
+}
+
+export interface ModelSettings {
+  news_model: string;
+  news_model_source: "override" | "env";
+  briefing_model: string;
+  briefing_model_source: "override" | "env";
+  chat_model: string;
+  chat_model_source: "override" | "env";
+}
+
+// Undefined fields = leave unchanged. null = clear override (fall back to env default).
+export type ModelSettingsUpdate = Partial<Record<"news_model" | "briefing_model" | "chat_model", string | null>>;
+
+export const settingsApi = {
+  catalog: () => api.get<ModelCatalogEntry[]>("/settings/models/catalog"),
+  models: () => api.get<ModelSettings>("/settings/models"),
+  updateModels: (payload: ModelSettingsUpdate) => api.put<ModelSettings>("/settings/models", payload),
+};

@@ -38,6 +38,18 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
 
+    # OpenRouter — one API key routes to Claude/GPT/DeepSeek/Llama/Qwen/etc.
+    # Optional; the LLM factory falls back to Gemini for any task whose
+    # configured model requires OpenRouter when this key is missing.
+    openrouter_api_key: str = ""
+
+    # Per-task model defaults. Admin can override these at runtime via the
+    # Settings UI (values persisted in system_settings). If the DB override
+    # is unset, these env values apply. Model IDs must match app/services/llm/catalog.py.
+    news_model: str = "gemini-2.5-flash"
+    briefing_model: str = "gemini-2.5-flash"
+    chat_model: str = "gemini-2.5-flash"
+
     # News / External
     news_api_key: str = ""
     unusual_whales_api_key: str = ""

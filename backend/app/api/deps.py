@@ -1,4 +1,4 @@
-from fastapi import Depends
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,4 +28,12 @@ async def get_current_user(
     if not user or not user.is_active:
         raise UnauthorizedError("User not found or inactive")
 
+    return user
+
+
+async def require_admin(user: User = Depends(get_current_user)) -> User:
+    """Gate for admin-only routes. Returns 403 for logged-in but
+    non-admin users; get_current_user already handles the unauth case."""
+    if not user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return user
