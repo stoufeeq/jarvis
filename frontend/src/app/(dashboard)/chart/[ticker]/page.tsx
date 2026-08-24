@@ -8,6 +8,7 @@ import { CandlestickChart } from "@/components/charts/CandlestickChart";
 import { useChartData } from "@/hooks/useChartData";
 import { formatCurrency, formatPct, pnlColor } from "@/lib/utils";
 import type { Quote, Signal } from "@/types";
+import { MomentumScoreCard } from "./MomentumScoreCard";
 
 const PERIODS = ["1W", "1M", "3M", "6M", "1Y", "2Y", "5Y"];
 
@@ -61,6 +62,9 @@ export default function ChartPage() {
           </div>
         )}
       </div>
+
+      {/* Momentum score — 9/20/50 EMA + VWAP intraday setup */}
+      <MomentumScoreCard ticker={ticker} />
 
       {/* Period selector */}
       <div className="flex gap-1">

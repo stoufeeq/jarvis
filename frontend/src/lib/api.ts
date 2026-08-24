@@ -120,7 +120,37 @@ export const marketApi = {
     api.get(`/market/details/${ticker}/news`, { params: { limit } }),
   detailsInsider: (ticker: string, limit = 10) =>
     api.get(`/market/details/${ticker}/insider`, { params: { limit } }),
+  momentumScore: (ticker: string, interval: "5m" | "15m" | "1h" = "15m") =>
+    api.get<MomentumScoreResponse>(`/market/momentum-score/${ticker}`, { params: { interval } }),
 };
+
+export type MomentumInterval = "5m" | "15m" | "1h";
+export type MomentumVerdict = "strong_bull" | "bull" | "neutral" | "bear" | "strong_bear";
+export type MomentumDirection = "bullish" | "bearish" | "neutral";
+
+export interface MomentumComponent {
+  key: "vwap" | "stack" | "price_vs_emas" | "trigger";
+  label: string;
+  detail: string;
+  direction: MomentumDirection;
+}
+
+export interface MomentumScoreResponse {
+  ticker: string;
+  interval: MomentumInterval;
+  verdict: MomentumVerdict;
+  score: number;         // signed −4..+4
+  score_abs: number;     // 0..4
+  direction: MomentumDirection;
+  components: MomentumComponent[];
+  rationale: string;
+  price: number | null;
+  vwap: number | null;
+  ema9: number | null;
+  ema20: number | null;
+  ema50: number | null;
+  updated_at: string;
+}
 
 export const signalsApi = {
   list: (params?: object) => api.get("/signals/", { params }),

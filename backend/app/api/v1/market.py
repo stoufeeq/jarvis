@@ -202,6 +202,33 @@ async def get_economic_calendar(
     return results
 
 
+@router.get("/momentum-score/{ticker}")
+async def get_momentum_score(
+    ticker: str,
+    interval: str = Query("15m", pattern="^(5m|15m|1h)$"),
+    _: User = Depends(get_current_user),
+):
+    """9/20/50 EMA + VWAP momentum score for the ticker at the given
+    intraday interval. See `app.services.momentum_score` for the rules.
+
+    404 when there isn't enough intraday data (delisted, weekends before
+    market open, brand-new listings). Response is a serialisable
+    dictionary — the dataclass fields map 1:1 including the list of
+    components."""
+    from dataclasses import asdict
+    from fastapi import HTTPException as _HTTPException
+    from app.services.momentum_score import MomentumScoreError, MomentumScoreService
+
+    try:
+        result = await MomentumScoreService().compute(ticker.upper(), interval=interval)  # type: ignore[arg-type]
+    except MomentumScoreError as exc:
+        raise _HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise _HTTPException(status_code=502, detail=f"Momentum score unavailable: {exc}")
+
+    return asdict(result)
+
+
 @router.get("/options/{ticker}")
 async def get_options_flow(ticker: str, _: User = Depends(get_current_user)):
     """Options flow summary: P/C ratio, net premium, unusual contracts.
