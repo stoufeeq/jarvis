@@ -8,7 +8,7 @@ import { CandlestickChart } from "@/components/charts/CandlestickChart";
 import { useChartData } from "@/hooks/useChartData";
 import { formatCurrency, formatPct, pnlColor } from "@/lib/utils";
 import type { Quote, Signal } from "@/types";
-import { MomentumScoreCard } from "./MomentumScoreCard";
+import { MomentumScoreCard } from "@/components/ui/MomentumScoreCard";
 
 const PERIODS = ["1W", "1M", "3M", "6M", "1Y", "2Y", "5Y"];
 
