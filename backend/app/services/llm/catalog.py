@@ -75,6 +75,25 @@ MODEL_CATALOG: tuple[ModelEntry, ...] = (
     # Gemini's free tier via Google's own API is more stable than
     # OpenRouter's aggregator arrangement — see Gemini 2.5 Flash above.
 
+    # ── OpenRouter — stealth / experimental (research use) ────────
+    # Ox Alpha: a reasoning model published under an anonymous
+    # 'stealth/' namespace on OpenRouter. Currently free but treat as
+    # ephemeral (see the free-tier note above). Provenance is
+    # deliberately unknown — the model runs on some third party's
+    # infra; prompts we send it are visible to whoever hosts it.
+    # Suitable for research/experimentation, not for anything where
+    # sending portfolio + personal info to an unattributed operator
+    # would matter. Mandatory reasoning means calls take 30-90s;
+    # briefing prompts may bump the OpenRouterClient 90s timeout.
+    ModelEntry(
+        id="stealth/ox-alpha",
+        provider="openrouter",
+        label="Ox Alpha (stealth, free)",
+        tier="free",
+        notes="Reasoning model, 1M context, currently free. Anonymous provider — see notes. Slow (30-90s).",
+        price_hint="Free (beta, may vanish)",
+    ),
+
     # ── OpenRouter — cheap paid (pennies at Jarvis volume) ────────
     ModelEntry(
         id="deepseek/deepseek-chat-v3.1",
