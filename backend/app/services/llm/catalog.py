@@ -14,6 +14,17 @@ Each entry captures what the admin needs to make a per-task decision:
 
 `get_provider_for_model(id)` is the routing helper — factory calls it
 to decide whether to instantiate GeminiClient or OpenRouterClient.
+
+MAINTENANCE NOTE — OpenRouter free tiers rotate. Vendors periodically
+pull free variants (e.g. DeepSeek pulled deepseek-chat-v3.1:free in
+Aug 2026, redirecting users to the paid slug). When a user reports
+"model unavailable for free" errors:
+  - Check openrouter.ai/models for what's currently free
+  - Update this catalog with the new slugs
+  - Consider migrating admins to the paid equivalent — usually
+    cents/month at Jarvis's volume
+A dynamic-catalog fetch from OpenRouter's /api/v1/models would remove
+this maintenance step entirely — see comment near MODEL_CATALOG.
 """
 from __future__ import annotations
 
@@ -53,21 +64,15 @@ MODEL_CATALOG: tuple[ModelEntry, ...] = (
         price_hint="~$1.25/M in",
     ),
     # ── OpenRouter — free tier models ─────────────────────────────
-    ModelEntry(
-        id="deepseek/deepseek-chat-v3.1:free",
-        provider="openrouter",
-        label="DeepSeek V3.1 (free)",
-        tier="free",
-        notes="Strong general model, free via OpenRouter. Rate-limited ~200/day.",
-        price_hint="Free",
-    ),
+    # (DeepSeek V3.1 free variant was pulled by vendor Aug 2026 —
+    # use the paid slug below.)
     ModelEntry(
         id="deepseek/deepseek-r1:free",
         provider="openrouter",
         label="DeepSeek R1 (free)",
         tier="free",
         notes="Reasoning model — thinks step-by-step. Slower but stronger on hard tasks.",
-        price_hint="Free",
+        price_hint="Free (may rotate)",
     ),
     ModelEntry(
         id="meta-llama/llama-3.3-70b-instruct:free",
@@ -75,7 +80,7 @@ MODEL_CATALOG: tuple[ModelEntry, ...] = (
         label="Llama 3.3 70B (free)",
         tier="free",
         notes="Meta's open-weight 70B. Solid all-rounder, no signup upcharge.",
-        price_hint="Free",
+        price_hint="Free (may rotate)",
     ),
     ModelEntry(
         id="qwen/qwen-2.5-72b-instruct:free",
@@ -83,15 +88,23 @@ MODEL_CATALOG: tuple[ModelEntry, ...] = (
         label="Qwen 2.5 72B (free)",
         tier="free",
         notes="Alibaba's 72B — strong on structured output and multilingual.",
-        price_hint="Free",
+        price_hint="Free (may rotate)",
     ),
-    # ── OpenRouter — paid, high quality ───────────────────────────
+    # ── OpenRouter — cheap paid ──────────────────────────────────
+    ModelEntry(
+        id="deepseek/deepseek-chat-v3.1",
+        provider="openrouter",
+        label="DeepSeek V3.1 (paid)",
+        tier="cheap",
+        notes="V3 chat model — reliable, no free-tier rate caps. Pennies at Jarvis volume.",
+        price_hint="~$0.27/M in",
+    ),
     ModelEntry(
         id="deepseek/deepseek-r1",
         provider="openrouter",
         label="DeepSeek R1 (paid)",
         tier="cheap",
-        notes="Full R1 without free-tier rate limits. ~$0.55/M in, best reasoning $/perf.",
+        notes="Full R1 without free-tier rate limits. Best reasoning $/perf on the paid market.",
         price_hint="~$0.55/M in",
     ),
     ModelEntry(

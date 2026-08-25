@@ -77,7 +77,15 @@ export function AdminModelsCard() {
       setDraft({});
       toast.success("Model settings saved");
     },
-    onError: () => toast.error("Failed to save model settings"),
+    onError: (err: unknown) => {
+      // Backend rejects unusable model choices with 422 + a detail message
+      // (e.g. "Model 'deepseek/…:free' rejected by provider: HTTP 404 …").
+      // Surface that instead of a generic "failed" toast — the user needs
+      // to see the provider's actual complaint to pick a working model.
+      const detail = (err as { response?: { data?: { detail?: string } } })
+        ?.response?.data?.detail;
+      toast.error(detail ?? "Failed to save model settings", { duration: 10_000 });
+    },
   });
 
   if (catalogLoading || modelsLoading) {

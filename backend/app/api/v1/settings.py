@@ -10,7 +10,7 @@ admins don't pick something the backend will fail to call.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_admin
@@ -89,20 +89,66 @@ async def update_model_settings(
       - Field absent from payload  → leave existing setting untouched
       - Field present with value    → upsert override
       - Field present with `null`   → clear override (falls back to env)
+
+    Each non-null model value is smoke-tested against the provider
+    before being persisted (a 1-token 'ping' completion). If the
+    provider rejects it (deprecated slug, missing API key, quota
+    exhausted, etc.), we return 422 with the raw provider message so
+    the admin sees the failure at save time instead of hours later
+    when a Celery task or a chat request finally exercises it. Prior
+    to this, a stored bad value could silently break the daily
+    briefing or advisor chat.
     """
-    svc = SystemSettingsService(db)
-    # Use model_fields_set to distinguish 'omitted' from 'explicit null'.
-    # Pydantic v2 preserves this on the instance.
+    from app.services.llm import LLMError, Message, resolve_client
+
+    # ── Pre-save validation ──────────────────────────────────────
+    # Only test the fields the admin actually set to a non-null
+    # value. Absent fields = no change (no test); None = clear the
+    # override (no model to test against).
     fields_set = payload.model_fields_set
     task_field_map: dict[TaskType, str] = {
         "news": "news_model",
         "briefing": "briefing_model",
         "chat": "chat_model",
     }
+    to_persist: list[tuple[TaskType, str | None]] = []
     for task, field in task_field_map.items():
-        if field in fields_set:
-            value = getattr(payload, field)
-            await svc.set(SETTING_KEY[task], value, updated_by=admin.id)
+        if field not in fields_set:
+            continue
+        value = getattr(payload, field)
+        to_persist.append((task, value))
+        if value:
+            # Quick end-to-end sanity check: instantiate the client,
+            # send one tiny completion. Any provider error surfaces
+            # here as a 422 with the raw message.
+            try:
+                client = resolve_client(value)
+                await client.chat(
+                    [Message(role="user", content="ping")],
+                    model=value,
+                    temperature=0.0,
+                )
+            except LLMError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Model {value!r} rejected by provider: {exc}. "
+                        "Check openrouter.ai/models (or your Gemini quota) "
+                        "and pick an available model."
+                    ),
+                )
+            except Exception as exc:
+                # Non-LLMError probably means missing API key or
+                # config bug. Same 422 for a coherent UI experience.
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Model {value!r} could not be initialised: {exc}",
+                )
+
+    # ── Persist (only after every value passed its smoke test) ────
+    svc = SystemSettingsService(db)
+    for task, value in to_persist:
+        await svc.set(SETTING_KEY[task], value, updated_by=admin.id)
     await db.commit()
 
     # Return the fresh state.
