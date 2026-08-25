@@ -107,7 +107,7 @@ async def chat(
     from app.services.market_snapshot import MarketSnapshotService
     market_snapshot = await MarketSnapshotService(db).get_latest_or_lazy()
 
-    advisor = AIAdvisor()
+    advisor = AIAdvisor(db)
     response = await advisor.chat(
         user_message=payload.message,
         portfolio_context=portfolio_context,
@@ -169,7 +169,7 @@ async def portfolio_review(
     if not p or p.user_id != user.id:
         raise NotFoundError("Portfolio not found")
     context = await svc.get_context_for_ai(p)
-    review = await AIAdvisor().portfolio_review(context)
+    review = await AIAdvisor(db).portfolio_review(context)
     return {"review": review}
 
 
@@ -179,5 +179,5 @@ async def news_digest(
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    digest = await AIAdvisor().news_digest(db=db, ticker=ticker)
+    digest = await AIAdvisor(db).news_digest(db=db, ticker=ticker)
     return {"digest": digest}

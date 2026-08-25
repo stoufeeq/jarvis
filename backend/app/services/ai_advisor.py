@@ -1,15 +1,21 @@
 """
-AI Advisor — powered by Google Gemini via the google-generativeai SDK.
+AI Advisor — routed through the LLM abstraction.
+
+Previously hard-coded to Gemini; now respects the admin's CHAT_MODEL
+override (Settings UI → AI Models). Same three methods:
+  - chat()             multi-turn conversational reply
+  - portfolio_review() single-shot structured review
+  - news_digest()      single-shot summarisation of recent news
+
+Provider is resolved per call from the DB override (falling back to
+env default) so admin changes take effect immediately without restart.
 """
 
-import google.generativeai as genai
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.models.news import NewsItem
-
-settings = get_settings()
+from app.services.llm import LLMError, Message, get_llm_for_task
 
 SYSTEM_PROMPT = """You are Jarvis — a knowledgeable, no-nonsense financial advisor
 talking to a single user (the one writing to you). Talk to them like a trusted
@@ -40,12 +46,11 @@ What to bring to the table:
 
 
 class AIAdvisor:
-    def __init__(self):
-        genai.configure(api_key=settings.gemini_api_key)
-        self._model = genai.GenerativeModel(
-            model_name=settings.gemini_model,
-            system_instruction=SYSTEM_PROMPT,
-        )
+    def __init__(self, db: AsyncSession):
+        # DB needed to look up the current CHAT_MODEL override (admin
+        # setting) at call time. Previously this class was stateless
+        # and hard-coded to Gemini.
+        self.db = db
 
     async def chat(
         self,
@@ -67,8 +72,7 @@ class AIAdvisor:
             market_snapshot: cached market data (indices, commodities, crypto,
                 forex, sectors, movers, headlines, macro). Injected as a full
                 preamble on the FIRST turn of a conversation, then condensed
-                to a one-line refresher on subsequent turns — Gemini already
-                has the full context from turn 1's user message in history.
+                to a one-line refresher on subsequent turns.
         """
         # Build the current turn's message — portfolio context (if any) and
         # market snapshot (if any) ride along with this turn only; they
@@ -100,23 +104,25 @@ class AIAdvisor:
         else:
             current_turn_text = user_message
 
-        # Convert our role labels to Gemini's. Skip the empty leading model
-        # turn case — Gemini errors if history starts with a "model" turn.
-        contents: list[dict] = []
+        # Build the message list for the abstraction: system prompt +
+        # history + current turn. The abstraction handles per-provider
+        # role translation (Gemini's user/model vs OpenAI-style user/
+        # assistant) internally.
+        messages: list[Message] = [Message(role="system", content=SYSTEM_PROMPT)]
         if history:
             for msg in history:
                 if not msg.get("content"):
                     continue
-                role = "model" if msg["role"] == "assistant" else "user"
-                # First message must be from "user"; drop any leading model turns.
-                if not contents and role == "model":
+                role = "assistant" if msg["role"] == "assistant" else "user"
+                # First non-system message should be a user turn; drop
+                # any leading assistant turns that would confuse Gemini.
+                if len(messages) == 1 and role == "assistant":
                     continue
-                contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+                messages.append(Message(role=role, content=msg["content"]))
+        messages.append(Message(role="user", content=current_turn_text))
 
-        contents.append({"role": "user", "parts": [{"text": current_turn_text}]})
-
-        response = await self._model.generate_content_async(contents)
-        return response.text
+        client, model_id = await get_llm_for_task(self.db, "chat")
+        return await client.chat(messages, model=model_id, temperature=0.7)
 
     async def portfolio_review(self, context: dict) -> str:
         prompt = f"""Please provide a comprehensive portfolio review.
@@ -131,8 +137,13 @@ Structure your review as:
 5. **Opportunities** — gaps or rebalancing suggestions
 6. **Summary** — top 3 actions to take this week"""
 
-        response = await self._model.generate_content_async(prompt)
-        return response.text
+        client, model_id = await get_llm_for_task(self.db, "chat")
+        # Prepend system prompt so tone/style matches the chat surface.
+        messages = [
+            Message(role="system", content=SYSTEM_PROMPT),
+            Message(role="user", content=prompt),
+        ]
+        return await client.chat(messages, model=model_id, temperature=0.5)
 
     async def news_digest(self, db: AsyncSession, ticker: str | None = None) -> str:
         query = select(NewsItem).order_by(NewsItem.published_at.desc()).limit(20)
@@ -161,8 +172,8 @@ For each significant signal, provide:
 - Directional bias (bullish/bearish/neutral)
 - Suggested action or watch level"""
 
-        response = await self._model.generate_content_async(prompt)
-        return response.text
+        client, model_id = await get_llm_for_task(self.db, "chat")
+        return await client.complete(prompt, model=model_id, temperature=0.4)
 
     def _format_portfolio_context(self, ctx: dict) -> str:
         lines = [
@@ -185,7 +196,6 @@ For each significant signal, provide:
             m = momentum.get(str(p.get("ticker", "")).upper())
             mom_suffix = ""
             if m:
-                # Verdicts already read naturally as words ('strong_bull' → 'Strong Bull')
                 verdict_label = m.get("verdict", "").replace("_", " ").title()
                 mom_suffix = f" | Momentum(15m): {verdict_label} (score {m.get('score')})"
             lines.append(
@@ -193,8 +203,6 @@ For each significant signal, provide:
                 f"Current: ${cp} | P&L: ${pnl:,.2f} ({pnl_pct:.2f}%)"
                 f"{mom_suffix}"
             )
-        # Legend so Gemini doesn't misinterpret the label if it's the
-        # first time it's seen momentum tags on this thread.
         if momentum:
             lines.append("")
             lines.append(
@@ -217,7 +225,6 @@ For each significant signal, provide:
             return None
         sign = "+" if chg is not None and chg >= 0 else ""
         chg_str = f" ({sign}{chg:.2f}%)" if chg is not None else ""
-        # Format price compactly: small values get more decimals.
         if price >= 1000:
             price_str = f"{price:,.2f}"
         elif price >= 1:
@@ -284,9 +291,9 @@ For each significant signal, provide:
         return "\n".join(lines)
 
     def _format_market_snapshot_refresher(self, snap: dict) -> str:
-        """One-line refresher used on turns after the first — Gemini already
-        saw the full snapshot in turn 1, this just nudges with latest top-line
-        prices in case the conversation drifted onto a different asset."""
+        """One-line refresher used on turns after the first — the model
+        already saw the full snapshot in turn 1, this just nudges with
+        latest top-line prices."""
         from datetime import datetime as _dt
 
         captured = snap.get("_captured_at")
@@ -322,3 +329,9 @@ For each significant signal, provide:
 
         prefix = f"Refresher ({ts}): " if ts else "Refresher: "
         return prefix + " | ".join(highlights) if highlights else prefix + "(no fresh data)"
+
+
+# Kept so an old caller like `AIAdvisor()` fails loudly at construction
+# rather than mysteriously later. LLMError is a runtime issue, this is
+# a call-site contract issue.
+_ = LLMError

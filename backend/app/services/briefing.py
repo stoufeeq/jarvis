@@ -57,7 +57,6 @@ import httpx
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.models.briefing import DailyBriefing
 from app.models.news import NewsItem
 from app.models.signal import Signal
@@ -526,11 +525,14 @@ class BriefingService:
         return headlines[:MAX_MARKET_HEADLINES]
 
     async def _call_gemini(self, context: dict) -> dict:
-        """Send assembled context to Gemini and parse the structured JSON response."""
-        settings = get_settings()
-        if not settings.gemini_api_key:
-            return self._fallback_content("Gemini API key not configured")
+        """Send assembled context to the currently-configured LLM (Gemini
+        by default, or whatever admin set BRIEFING_MODEL to) and parse
+        the structured JSON response.
 
+        Method name kept as _call_gemini for git-blame continuity — the
+        implementation now goes through app.services.llm.get_llm_for_task
+        so the provider is admin-controlled at runtime.
+        """
         portfolio_str = ""
         for p in context.get("portfolios", []):
             portfolio_str += f"\nPortfolio: {p['name']} ({p['currency']})\n"
@@ -680,22 +682,31 @@ Respond with ONLY valid JSON (no markdown, no explanation) in exactly this struc
 
 Include up to 5 portfolio items, 5 watchlist opportunities, and 3 S&P 500 opportunities. Focus on items with the strongest signals and clearest catalysts."""
 
-        try:
-            import google.generativeai as genai
-            genai.configure(api_key=settings.gemini_api_key)
-            # Force structured JSON output — drastically reduces malformed
-            # responses vs free-form prompting. Available since Gemini 1.5+.
-            model = genai.GenerativeModel(
-                settings.gemini_model,
-                generation_config={"response_mime_type": "application/json"},
-            )
+        # Route through the LLM abstraction so admin's BRIEFING_MODEL
+        # override (set via Settings UI) actually takes effect. Previously
+        # hard-coded to Gemini which meant DeepSeek/Claude choices in the
+        # UI were silently ignored for the briefing.
+        from app.services.llm import LLMError, get_llm_for_task
 
+        try:
+            client, model_id = await get_llm_for_task(self.db, "briefing")
+        except LLMError as exc:
+            log.error("Briefing: LLM resolution failed — %s", exc)
+            return self._fallback_content(str(exc))
+
+        try:
             # Retry once on JSON parse failure — covers the rare case where
-            # Gemini still emits malformed output even in JSON mode.
+            # the model still emits malformed output.
             last_error: str | None = None
             for attempt in (1, 2):
-                response = model.generate_content(prompt)
-                raw = (response.text or "").strip()
+                # Nudge the model to emit pure JSON. Gemini honors this via
+                # response_mime_type in its native SDK, but through the
+                # generic abstraction we lean on prompt instructions
+                # (models we support — DeepSeek/Claude/Llama — reliably
+                # emit pure JSON when asked directly, and we strip fences
+                # defensively below).
+                raw = await client.complete(prompt, model=model_id, temperature=0.3)
+                raw = (raw or "").strip()
 
                 # Strip markdown code fences if present (belt-and-braces)
                 if raw.startswith("```"):
@@ -710,15 +721,18 @@ Include up to 5 portfolio items, 5 watchlist opportunities, and 3 S&P 500 opport
                         log.info("Briefing JSON parse succeeded on retry attempt 2")
                     return parsed
 
-                last_error = "could not parse Gemini JSON output"
+                last_error = "could not parse LLM JSON output"
                 log.warning(
-                    "Briefing JSON parse failed (attempt %d). First 500 chars: %s",
-                    attempt, raw[:500],
+                    "Briefing JSON parse failed (attempt %d, provider=%s, model=%s). First 500 chars: %s",
+                    attempt, client.provider, model_id, raw[:500],
                 )
 
             return self._fallback_content(f"JSON parse error after retry: {last_error}")
+        except LLMError as exc:
+            log.error("Briefing LLM call failed (%s / %s): %s", client.provider, model_id, exc)
+            return self._fallback_content(str(exc))
         except Exception as exc:
-            log.error("Gemini briefing call failed: %s", exc)
+            log.error("Briefing generation failed: %s", exc)
             return self._fallback_content(str(exc))
 
     @staticmethod
