@@ -63,48 +63,41 @@ MODEL_CATALOG: tuple[ModelEntry, ...] = (
         notes="Google's top reasoning model. Best for briefing synthesis.",
         price_hint="~$1.25/M in",
     ),
-    # ── OpenRouter — free tier models ─────────────────────────────
-    # (DeepSeek V3.1 free variant was pulled by vendor Aug 2026 —
-    # use the paid slug below.)
-    ModelEntry(
-        id="deepseek/deepseek-r1:free",
-        provider="openrouter",
-        label="DeepSeek R1 (free)",
-        tier="free",
-        notes="Reasoning model — thinks step-by-step. Slower but stronger on hard tasks.",
-        price_hint="Free (may rotate)",
-    ),
-    ModelEntry(
-        id="meta-llama/llama-3.3-70b-instruct:free",
-        provider="openrouter",
-        label="Llama 3.3 70B (free)",
-        tier="free",
-        notes="Meta's open-weight 70B. Solid all-rounder, no signup upcharge.",
-        price_hint="Free (may rotate)",
-    ),
-    ModelEntry(
-        id="qwen/qwen-2.5-72b-instruct:free",
-        provider="openrouter",
-        label="Qwen 2.5 72B (free)",
-        tier="free",
-        notes="Alibaba's 72B — strong on structured output and multilingual.",
-        price_hint="Free (may rotate)",
-    ),
-    # ── OpenRouter — cheap paid ──────────────────────────────────
+    # ── OpenRouter free tier — mostly dead as of Aug 2026 ─────────
+    # DeepSeek V3.1, Llama 3.3, and Qwen 2.5 :free variants have all
+    # been pulled by their providers within days of each other. The
+    # remaining slugs below are believed still-free but the tier is
+    # unreliable — save-time validation will reject a dead slug with
+    # a clear error. If we hit "all my free slugs die weekly" as a
+    # pattern, promote the dynamic-catalog build (fetch OpenRouter's
+    # /api/v1/models on load, filter for pricing.prompt == "0").
+    #
+    # Gemini's free tier via Google's own API is more stable than
+    # OpenRouter's aggregator arrangement — see Gemini 2.5 Flash above.
+
+    # ── OpenRouter — cheap paid (pennies at Jarvis volume) ────────
     ModelEntry(
         id="deepseek/deepseek-chat-v3.1",
         provider="openrouter",
         label="DeepSeek V3.1 (paid)",
         tier="cheap",
-        notes="V3 chat model — reliable, no free-tier rate caps. Pennies at Jarvis volume.",
+        notes="V3 chat model — reliable, no free-tier rate caps. Pennies/month at Jarvis volume.",
         price_hint="~$0.27/M in",
+    ),
+    ModelEntry(
+        id="meta-llama/llama-3.3-70b-instruct",
+        provider="openrouter",
+        label="Llama 3.3 70B (paid)",
+        tier="cheap",
+        notes="Meta's open-weight 70B via cheapest provider. Solid all-rounder.",
+        price_hint="~$0.20/M in",
     ),
     ModelEntry(
         id="deepseek/deepseek-r1",
         provider="openrouter",
         label="DeepSeek R1 (paid)",
         tier="cheap",
-        notes="Full R1 without free-tier rate limits. Best reasoning $/perf on the paid market.",
+        notes="Full R1 reasoning model without free-tier caps. Best reasoning $/perf on the market.",
         price_hint="~$0.55/M in",
     ),
     ModelEntry(
