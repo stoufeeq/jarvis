@@ -122,7 +122,22 @@ export const marketApi = {
     api.get(`/market/details/${ticker}/insider`, { params: { limit } }),
   momentumScore: (ticker: string, interval: "5m" | "15m" | "1h" = "15m") =>
     api.get<MomentumScoreResponse>(`/market/momentum-score/${ticker}`, { params: { interval } }),
+  momentumScoresBatch: (tickers: string[], interval: "5m" | "15m" | "1h" = "15m") =>
+    api.get<Record<string, MomentumScoreResponse | null>>("/market/momentum-scores", {
+      params: { tickers, interval },
+      // axios repeats the tickers[] param — matches FastAPI's list[str] Query
+      paramsSerializer: { indexes: null },
+    }),
+  topSetups: (limit = 3, interval: "5m" | "15m" | "1h" = "15m") =>
+    api.get<TopSetupsResponse>("/market/top-setups", { params: { limit, interval } }),
 };
+
+export interface TopSetupsResponse {
+  bulls: MomentumScoreResponse[];
+  bears: MomentumScoreResponse[];
+  as_of: string | null;
+  universe_size?: number;
+}
 
 export type MomentumInterval = "5m" | "15m" | "1h";
 export type MomentumVerdict = "strong_bull" | "bull" | "neutral" | "bear" | "strong_bear";

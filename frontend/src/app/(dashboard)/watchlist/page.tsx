@@ -10,6 +10,7 @@ import { formatCurrency, pnlColor } from "@/lib/utils";
 import { isCrypto } from "@/lib/crypto";
 import { TickerLink } from "@/components/ui/TickerLink";
 import { HalalBadge } from "@/components/ui/HalalBadge";
+import { MomentumBadge, useMomentumScoresBatch } from "@/components/ui/MomentumBadge";
 import { useHalalCompliance } from "@/hooks/useHalalCompliance";
 import { useSettingsStore } from "@/store/settings";
 import type { Quote, WatchlistItem } from "@/types";
@@ -79,6 +80,12 @@ export default function WatchlistPage() {
 
   const halalOnlyFilter = useSettingsStore((s) => s.halalOnlyFilter);
   const halalByTicker = useHalalCompliance(allTickers);
+
+  // Momentum scores for row-level badges. Batched — one HTTP call
+  // covers the whole watchlist. Crypto tickers excluded (24/7 markets
+  // have no session-anchored VWAP).
+  const momentumTickers = allTickers.filter((t) => !isCrypto(t));
+  const { data: momentumScores = {} } = useMomentumScoresBatch(momentumTickers, "15m");
 
   // "Halal only" filter — hides explicitly non-compliant; keeps compliant + unknown.
   const items: WatchlistItem[] = halalOnlyFilter
@@ -319,6 +326,9 @@ export default function WatchlistPage() {
                           </button>
                           <TickerLink ticker={ticker} />
                           <HalalBadge compliance={halalByTicker[ticker]} />
+                          {!isCrypto(ticker) && (
+                            <MomentumBadge score={momentumScores[ticker.toUpperCase()]} />
+                          )}
                           {isCrypto(ticker) && (
                             <span className="ml-1.5 text-[10px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500">
                               crypto

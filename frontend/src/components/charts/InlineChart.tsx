@@ -6,6 +6,8 @@ import { signalsApi } from "@/lib/api";
 import { CandlestickChart } from "@/components/charts/CandlestickChart";
 import { useChartData } from "@/hooks/useChartData";
 import { formatCurrency, formatPct, pnlColor } from "@/lib/utils";
+import { MomentumScoreCard } from "@/components/ui/MomentumScoreCard";
+import { isCrypto } from "@/lib/crypto";
 import type { Quote, Signal } from "@/types";
 
 const PERIODS = ["1W", "1M", "3M", "6M", "1Y", "2Y", "5Y"];
@@ -82,6 +84,11 @@ export function InlineChart({ ticker, quote }: Props) {
           />
         )}
       </div>
+
+      {/* Momentum score — 9/20/50 EMA + VWAP. Above Active Signals so
+          the current intraday setup reads immediately after the chart.
+          Skipped for crypto (24/7 markets have no session-VWAP semantics). */}
+      {!isCrypto(ticker) && <MomentumScoreCard ticker={ticker} />}
 
       {/* Active signals */}
       {signals.length > 0 && (

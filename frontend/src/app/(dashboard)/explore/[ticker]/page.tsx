@@ -11,7 +11,6 @@ import {
   alertsApi,
 } from "@/lib/api";
 import { InlineChart } from "@/components/charts/InlineChart";
-import { MomentumScoreCard } from "@/components/ui/MomentumScoreCard";
 import { formatCurrency, formatPct, pnlColor } from "@/lib/utils";
 import { isCrypto } from "@/lib/crypto";
 import type {
@@ -275,12 +274,7 @@ export default function ExplorePage() {
         <InlineChart ticker={ticker} quote={quote} />
       </div>
 
-      {/* ── Section 2b: Intraday momentum score (9/20/50 EMA + VWAP) ──────── */}
-      {/* Read-only decision-support. Backtest (Phase 2) showed no automated
-          edge on this basket after costs — the card is context for human
-          judgment, not a trade signal. Skip for crypto (intraday sessions
-          don't have market-open VWAP semantics). */}
-      {!isCrypto(ticker) && <MomentumScoreCard ticker={ticker} />}
+      {/* (Momentum score card now lives inside InlineChart, above Active Signals) */}
 
       {/* Sections that need details — show skeletons until loaded */}
       {detailsLoading && !details && (

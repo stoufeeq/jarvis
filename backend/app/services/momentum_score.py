@@ -17,20 +17,48 @@ information, so this service only accepts intraday intervals.
 Returns a Verdict enum (Strong Bull / Bull / Neutral / Bear / Strong Bear)
 + per-component breakdown + one-line rationale + numeric score for
 consumers that want raw data.
+
+Redis cache: each (ticker, interval) result cached for CACHE_TTL_SEC.
+Watchlist/portfolio badges and the dashboard 'Top Setups' tile all
+batch-fetch scores for many tickers at once, and paying the ~10s
+yfinance fetch per ticker per view would be brutal — the cache means
+the first pageview computes fresh and subsequent hits (within TTL)
+return instantly. yfinance intraday data itself is ~15-min delayed
+so a 5-min cache doesn't cost freshness.
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
 import numpy as np
 import pandas as pd
+import redis.asyncio as aioredis
 
+from app.config import get_settings
 from app.services.market_data import MarketDataService
 
 log = logging.getLogger(__name__)
+
+# Redis cache: key = momentum:{ticker}:{interval}. TTL matches roughly
+# one intraday bar refresh — enough to absorb concurrent badge fetches
+# on a page load without going stale.
+CACHE_KEY_TEMPLATE = "momentum:{ticker}:{interval}"
+CACHE_TTL_SEC = 300  # 5 min
+
+# Shared aioredis client per process. Same pattern as heatmap service.
+_redis_client: aioredis.Redis | None = None
+
+
+def _redis() -> aioredis.Redis:
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = aioredis.from_url(get_settings().redis_url, decode_responses=True)
+    return _redis_client
 
 
 # Only these are supported — the setup is intraday by design. 1d is
@@ -100,11 +128,56 @@ class MomentumScoreService:
     def __init__(self):
         self._mds = MarketDataService()
 
-    async def compute(self, ticker: str, interval: SupportedInterval = "15m") -> MomentumScore:
+    # ── Cache helpers ─────────────────────────────────────────────
+    # Redis stores the serialised MomentumScore as JSON. Cache misses
+    # and Redis failures both degrade to a fresh compute — never crash
+    # a request over a cache issue.
+
+    @staticmethod
+    def _cache_key(ticker: str, interval: str) -> str:
+        return CACHE_KEY_TEMPLATE.format(ticker=ticker.upper(), interval=interval)
+
+    async def _cache_get(self, ticker: str, interval: str) -> MomentumScore | None:
+        try:
+            raw = await _redis().get(self._cache_key(ticker, interval))
+            if not raw:
+                return None
+            data = json.loads(raw)
+            # Rehydrate — Component is a dataclass too, need to reconstruct
+            comps = [Component(**c) for c in data.pop("components", [])]
+            return MomentumScore(components=comps, **data)
+        except Exception:
+            log.debug("Momentum cache GET failed for %s@%s", ticker, interval, exc_info=True)
+            return None
+
+    async def _cache_set(self, score: MomentumScore) -> None:
+        try:
+            await _redis().set(
+                self._cache_key(score.ticker, score.interval),
+                json.dumps(asdict(score)),
+                ex=CACHE_TTL_SEC,
+            )
+        except Exception:
+            log.debug("Momentum cache SET failed for %s@%s", score.ticker, score.interval, exc_info=True)
+
+    # ── Compute ───────────────────────────────────────────────────
+
+    async def compute(
+        self,
+        ticker: str,
+        interval: SupportedInterval = "15m",
+        *,
+        use_cache: bool = True,
+    ) -> MomentumScore:
         if interval not in ALLOWED_INTERVALS:
             raise MomentumScoreError(
                 f"Interval {interval!r} not supported. Use one of {ALLOWED_INTERVALS}."
             )
+
+        if use_cache:
+            cached = await self._cache_get(ticker, interval)
+            if cached is not None:
+                return cached
 
         df = await self._mds.get_ohlcv_dataframe(
             ticker, period=PERIOD_FOR_INTERVAL[interval], interval=interval,
@@ -149,7 +222,7 @@ class MomentumScoreService:
         verdict = _verdict(score)
         rationale = _rationale(components, direction)
 
-        return MomentumScore(
+        result = MomentumScore(
             ticker=ticker.upper(),
             interval=interval,
             verdict=verdict,
@@ -165,6 +238,42 @@ class MomentumScoreService:
             ema50=ema50,
             updated_at=datetime.now(UTC).isoformat(),
         )
+        await self._cache_set(result)
+        return result
+
+    async def compute_many(
+        self,
+        tickers: list[str],
+        interval: SupportedInterval = "15m",
+        *,
+        concurrency: int = 8,
+    ) -> dict[str, MomentumScore | None]:
+        """Batch-compute scores for many tickers. Result is a dict
+        keyed by uppercase ticker; a value of None means the score
+        couldn't be computed for that ticker (delisted, thin history,
+        transport error). Never raises — batching should always return
+        a partial answer so callers can render whatever succeeded.
+
+        Concurrency is capped both for yfinance politeness and to keep
+        the backend event loop responsive under many-ticker requests
+        (e.g. the dashboard top-setups tile pulling 70+ names)."""
+        sem = asyncio.Semaphore(concurrency)
+
+        async def _one(t: str) -> tuple[str, MomentumScore | None]:
+            async with sem:
+                try:
+                    return t.upper(), await self.compute(t, interval=interval)
+                except MomentumScoreError:
+                    # Expected: not enough data for this ticker
+                    return t.upper(), None
+                except Exception as exc:
+                    log.warning("Momentum compute_many: %s failed — %s", t, exc)
+                    return t.upper(), None
+
+        # Deduplicate to avoid double-work if caller passes duplicates.
+        unique = sorted({t.upper() for t in tickers if t})
+        results = await asyncio.gather(*(_one(t) for t in unique))
+        return dict(results)
 
 
 # ────────────────────────────────────────────────────────────────────

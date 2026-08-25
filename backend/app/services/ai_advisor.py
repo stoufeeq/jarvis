@@ -172,13 +172,37 @@ For each significant signal, provide:
             "",
             "### Positions",
         ]
+        # Momentum scores are enriched by the /advisor/chat endpoint;
+        # keyed by upper-case ticker. When present, the per-position line
+        # gets a short suffix so the model can factor it into answers.
+        # Absent (or None per ticker) means no intraday data — usually
+        # crypto or after-hours weekend fetches.
+        momentum = ctx.get("momentum_scores") or {}
         for p in ctx.get("positions", []):
             pnl = p.get("unrealized_pnl") or 0
             pnl_pct = p.get("unrealized_pnl_pct") or 0
             cp = p.get("current_price") or "N/A"
+            m = momentum.get(str(p.get("ticker", "")).upper())
+            mom_suffix = ""
+            if m:
+                # Verdicts already read naturally as words ('strong_bull' → 'Strong Bull')
+                verdict_label = m.get("verdict", "").replace("_", " ").title()
+                mom_suffix = f" | Momentum(15m): {verdict_label} (score {m.get('score')})"
             lines.append(
                 f"- {p['ticker']}: {p['quantity']} shares @ avg ${p['avg_cost']:.2f} | "
                 f"Current: ${cp} | P&L: ${pnl:,.2f} ({pnl_pct:.2f}%)"
+                f"{mom_suffix}"
+            )
+        # Legend so Gemini doesn't misinterpret the label if it's the
+        # first time it's seen momentum tags on this thread.
+        if momentum:
+            lines.append("")
+            lines.append(
+                "(Momentum(15m) = intraday 9/20/50 EMA + VWAP composite. Strong Bull / "
+                "Bull = trend + VWAP + trigger aligned bullish; Neutral = mixed; Bear / "
+                "Strong Bear = aligned bearish. Backtest showed this is directional "
+                "context for human judgment, not an automated edge signal — weight it "
+                "accordingly.)"
             )
         return "\n".join(lines)
 

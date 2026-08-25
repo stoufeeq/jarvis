@@ -9,6 +9,7 @@ import { useCurrencyDisplay } from "@/hooks/useCurrencyDisplay";
 import { CurrencySwitcher } from "@/components/ui/CurrencySwitcher";
 import { PrivacyToggle } from "@/components/ui/PrivacyToggle";
 import { VixTile } from "@/components/ui/VixTile";
+import { TopSetupsCard } from "@/components/ui/TopSetupsCard";
 import { usePrivacyStore } from "@/store/privacy";
 import { useTradingModeStore } from "@/store/tradingMode";
 import type { Portfolio, Position, Signal, Quote, LiquidityResponse, Briefing } from "@/types";
@@ -240,6 +241,9 @@ export default function DashboardPage() {
 
       {/* Daily Briefing card */}
       {briefing && <BriefingCard briefing={briefing} />}
+
+      {/* Top Setups — 9/20/50 EMA + VWAP momentum picks from your holdings + watchlist */}
+      <TopSetupsCard />
 
       {/* Top Movers */}
       {allStocks.length > 0 && (

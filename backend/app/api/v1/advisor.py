@@ -58,6 +58,31 @@ async def chat(
             raise NotFoundError("Portfolio not found")
         portfolio_context = await svc.get_context_for_ai(p)
 
+        # Enrich with intraday momentum scores for each held ticker so
+        # the model can factor "the setup is Strong Bull right now" into
+        # answers like "should I add to NVDA?". Cached (5-min Redis TTL
+        # per ticker), so this is usually near-instant.
+        # Crypto tickers return None (no session VWAP) — safe.
+        # Any failure is swallowed — advisor must work even if intraday
+        # data is unavailable.
+        from app.services.momentum_score import MomentumScoreService
+        try:
+            tickers = [
+                p_row["ticker"] for p_row in portfolio_context.get("positions", [])
+                if p_row.get("ticker")
+            ]
+            if tickers:
+                scores = await MomentumScoreService().compute_many(tickers, interval="15m")
+                portfolio_context["momentum_scores"] = {
+                    t: (
+                        {"verdict": s.verdict, "score": s.score, "rationale": s.rationale}
+                        if s is not None else None
+                    )
+                    for t, s in scores.items()
+                }
+        except Exception:
+            pass
+
     conv_svc = ConversationService(db)
 
     # Get or create the conversation. For existing conversations we capture

@@ -16,7 +16,9 @@ import { useTradingModeStore } from "@/store/tradingMode";
 import type { Portfolio, Position, Trade, Quote } from "@/types";
 import { TickerLink } from "@/components/ui/TickerLink";
 import { HalalBadge } from "@/components/ui/HalalBadge";
+import { MomentumBadge, useMomentumScoresBatch } from "@/components/ui/MomentumBadge";
 import { useHalalCompliance } from "@/hooks/useHalalCompliance";
+import { isCrypto } from "@/lib/crypto";
 import toast from "react-hot-toast";
 
 const MASK = "••••••";
@@ -123,6 +125,9 @@ export default function PortfolioPage() {
   // Live quotes for change % column — runs in parallel with positions
   const tickers = useMemo(() => [...new Set(positions.map((p) => p.ticker))], [positions]);
   const halalByTicker = useHalalCompliance(tickers);
+  // Momentum scores for row-level badges (skip crypto — no session VWAP).
+  const momentumTickers = useMemo(() => tickers.filter((t) => !isCrypto(t)), [tickers]);
+  const { data: momentumScores = {} } = useMomentumScoresBatch(momentumTickers, "15m");
   const { data: quotes = [] } = useQuery<Quote[]>({
     queryKey: ["position-quotes", tickers],
     queryFn: () => marketApi.quotes(tickers).then((r) => r.data),
@@ -1008,6 +1013,9 @@ export default function PortfolioPage() {
                               </button>
                               <TickerLink ticker={pos.ticker} />
                               <HalalBadge compliance={halalByTicker[pos.ticker]} />
+                              {!isCrypto(pos.ticker) && (
+                                <MomentumBadge score={momentumScores[pos.ticker.toUpperCase()]} />
+                              )}
                               {pos.currency && pos.currency !== "USD" && (
                                 <span className="text-xs px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">
                                   {pos.currency}

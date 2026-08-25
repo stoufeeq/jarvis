@@ -229,6 +229,118 @@ async def get_momentum_score(
     return asdict(result)
 
 
+@router.get("/momentum-scores")
+async def get_momentum_scores(
+    tickers: list[str] = Query(..., description="Repeat: ?tickers=AAPL&tickers=MSFT&…"),
+    interval: str = Query("15m", pattern="^(5m|15m|1h)$"),
+    _: User = Depends(get_current_user),
+):
+    """Batch momentum scores — one HTTP round-trip for many tickers.
+
+    Used by watchlist/portfolio row badges (small pill per row) and
+    the dashboard 'Top Setups' tile. Returns a dict keyed by uppercase
+    ticker; missing/failed tickers map to null so the caller can render
+    a placeholder for those rows rather than a whole-batch error.
+
+    Concurrency + caching (5-min Redis TTL per ticker) are handled by
+    MomentumScoreService.compute_many, so a 70-ticker call is quick on
+    a warm cache and never crushes yfinance on a cold one."""
+    from dataclasses import asdict
+    from app.services.momentum_score import MomentumScoreService
+
+    if len(tickers) > 200:
+        # Sanity cap. Even the dashboard tile shouldn't exceed ~100.
+        tickers = tickers[:200]
+
+    results = await MomentumScoreService().compute_many(tickers, interval=interval)  # type: ignore[arg-type]
+    return {t: (asdict(s) if s is not None else None) for t, s in results.items()}
+
+
+@router.get("/top-setups")
+async def get_top_setups(
+    limit: int = Query(3, ge=1, le=10),
+    interval: str = Query("15m", pattern="^(5m|15m|1h)$"),
+    user: User = Depends(get_current_user),
+):
+    """Top strong-bull + strong-bear setups across the user's portfolio
+    holdings and watchlist items. Used by the dashboard Top Setups tile.
+
+    Returns two ranked lists (top `limit` each). Tickers with tie scores
+    are secondary-sorted by score magnitude (strong_bull=4 beats bull=2)
+    then by |price - VWAP| — how far the price sits from the session's
+    institutional benchmark, a rough conviction proxy.
+
+    Since we depend on the user's holdings + watchlist, this is
+    per-user and cannot be usefully cached at the endpoint level (the
+    per-ticker score cache still applies underneath)."""
+    from dataclasses import asdict
+    from sqlalchemy import select as _select
+
+    from app.database import get_db as _get_db  # local import to avoid circular
+    from app.models.portfolio import BrokerType, Portfolio, Position
+    from app.models.watchlist import Watchlist, WatchlistItem
+    from app.services.momentum_score import MomentumScoreService
+
+    # We need an AsyncSession here — depend on it inline. Not passing
+    # `db` as a dep because the endpoint's other args stay tight.
+    async for db in _get_db():
+        tickers: set[str] = set()
+        # Real (non-paper) portfolios only — paper positions can be
+        # trades the user is actively experimenting with; not "real"
+        # setups worth flagging.
+        rows = (await db.execute(
+            _select(Position.ticker).distinct()
+            .join(Portfolio, Portfolio.id == Position.portfolio_id)
+            .where(
+                Portfolio.user_id == user.id,
+                Portfolio.broker != BrokerType.paper,
+                Position.quantity > 0,
+            )
+        )).all()
+        tickers.update(r[0].upper() for r in rows)
+
+        rows = (await db.execute(
+            _select(WatchlistItem.ticker).distinct()
+            .join(Watchlist, Watchlist.id == WatchlistItem.watchlist_id)
+            .where(Watchlist.user_id == user.id)
+        )).all()
+        tickers.update(r[0].upper() for r in rows)
+        break  # single iteration — get_db yields once
+
+    if not tickers:
+        return {"bulls": [], "bears": [], "as_of": None}
+
+    results = await MomentumScoreService().compute_many(list(tickers), interval=interval)  # type: ignore[arg-type]
+
+    def _vwap_gap(s) -> float:
+        # Guard step-by-step so type-narrowing works cleanly for pyright.
+        p = s.price
+        v = s.vwap
+        if p is None or v is None:
+            return 0.0
+        if v == 0:
+            return 0.0
+        return abs((p - v) / v)
+
+    live = [s for s in results.values() if s is not None]
+    bulls = sorted(
+        [s for s in live if s.direction == "bullish"],
+        key=lambda s: (-s.score, -_vwap_gap(s)),
+    )[:limit]
+    bears = sorted(
+        [s for s in live if s.direction == "bearish"],
+        key=lambda s: (s.score, -_vwap_gap(s)),
+    )[:limit]
+
+    from datetime import UTC, datetime
+    return {
+        "bulls": [asdict(s) for s in bulls],
+        "bears": [asdict(s) for s in bears],
+        "as_of": datetime.now(UTC).isoformat(),
+        "universe_size": len(tickers),
+    }
+
+
 @router.get("/options/{ticker}")
 async def get_options_flow(ticker: str, _: User = Depends(get_current_user)):
     """Options flow summary: P/C ratio, net premium, unusual contracts.
