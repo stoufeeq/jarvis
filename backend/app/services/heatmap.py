@@ -99,6 +99,21 @@ class HeatmapService:
         return data
 
 
+def _reconcile_change(fast_info: float | None, download: float | None) -> float | None:
+    """Merge fast_info and download-derived change_pct into a single
+    value. See callsite for the reasoning behind picking the more
+    extreme reading on disagreement."""
+    if fast_info is None and download is None:
+        return None
+    if fast_info is None:
+        return download
+    if download is None:
+        return fast_info
+    if abs(fast_info - download) <= 1.0:
+        return download
+    return download if abs(download) > abs(fast_info) else fast_info
+
+
 def _change_pct_via_fast_info(ticker: str) -> float | None:
     """Return today's change_pct using yfinance fast_info, or None on error.
 
@@ -204,19 +219,44 @@ def _fetch_heatmap_sync() -> dict:
     with ThreadPoolExecutor(max_workers=FAST_INFO_WORKERS) as exe:
         fast_results = dict(zip(tickers, exe.map(_change_pct_via_fast_info, tickers)))
 
-    # Prefer fast_info; fall back to download-derived value when missing.
-    fast_info_hits = 0
+    # Reconcile fast_info vs download-derived change %:
+    # - Both None                                 → None
+    # - Only one available                        → use it
+    # - Both available and within ~1 pp           → use download (batched
+    #   fetch is more consistent)
+    # - Both available but disagree by > ~1 pp    → use the more extreme
+    #   reading. Rationale: yfinance's fast_info.lastPrice is known to lag
+    #   for heavy-volume names (Aug 28 2026 saw CRM at true +21% but
+    #   fast_info stuck at +7% for hours). Stale readings tend to be
+    #   *smaller* because the price moved further after the snapshot was
+    #   taken; whichever data path shows the larger absolute move captured
+    #   the ticker's price later in the day.
+    fast_info_used = 0
+    download_used = 0
+    disagreements = 0
     for ticker in tickers:
         from_fast = fast_results.get(ticker)
-        if from_fast is not None:
-            change_map[ticker] = from_fast
-            fast_info_hits += 1
+        from_download = download_change_fallback.get(ticker)
+        chosen = _reconcile_change(from_fast, from_download)
+        change_map[ticker] = chosen
+        if chosen is None:
+            continue
+        if from_fast is not None and from_download is not None:
+            if abs(from_fast - from_download) > 3.0:
+                disagreements += 1
+                log.info(
+                    "Heatmap reconcile %s: fast_info=%.2f%% vs download=%.2f%%, using %.2f%% (%s)",
+                    ticker, from_fast, from_download, chosen,
+                    "download" if chosen == from_download else "fast_info",
+                )
+        if chosen == from_download:
+            download_used += 1
         else:
-            change_map[ticker] = download_change_fallback.get(ticker)
+            fast_info_used += 1
 
     log.info(
-        "Heatmap fetched: %d/%d via fast_info, rest from download fallback",
-        fast_info_hits, len(tickers),
+        "Heatmap fetched: fast_info=%d download=%d disagreements>3pp=%d",
+        fast_info_used, download_used, disagreements,
     )
 
     payload: dict[str, Any] = {
