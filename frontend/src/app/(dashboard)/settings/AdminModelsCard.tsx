@@ -174,11 +174,16 @@ export function AdminModelsCard() {
                 const tierLabel = tier === "free" ? "Free" : tier === "cheap" ? "Cheap" : "Premium";
                 return (
                   <optgroup key={tier} label={tierLabel}>
-                    {tierModels.map((m) => (
-                      <option key={m.id} value={m.id} disabled={!m.available}>
-                        {m.label} — {m.price_hint}{m.available ? "" : "  (API key missing)"}
-                      </option>
-                    ))}
+                    {tierModels.map((m) => {
+                      // Provider prefix so admin knows which key/billing account
+                      // will foot the bill: [Gemini] vs [OpenRouter] on every row.
+                      const providerTag = m.provider === "gemini" ? "[Gemini]" : "[OpenRouter]";
+                      return (
+                        <option key={m.id} value={m.id} disabled={!m.available}>
+                          {providerTag} {m.label} — {m.price_hint}{m.available ? "" : "  (API key missing)"}
+                        </option>
+                      );
+                    })}
                   </optgroup>
                 );
               })}
@@ -187,6 +192,20 @@ export function AdminModelsCard() {
               <p className="text-[11px] text-muted-foreground/80 leading-snug">
                 <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] mr-1.5 ${TIER_BADGE[currentEntry.tier]}`}>
                   {currentEntry.tier}
+                </span>
+                <span
+                  className={`inline-block px-1.5 py-0.5 rounded text-[10px] mr-1.5 ${
+                    currentEntry.provider === "gemini"
+                      ? "bg-blue-500/20 text-blue-300"
+                      : "bg-purple-500/20 text-purple-300"
+                  }`}
+                  title={
+                    currentEntry.provider === "gemini"
+                      ? "Billed to your Gemini API credits (GEMINI_API_KEY on server)"
+                      : "Billed to your OpenRouter credits (OPENROUTER_API_KEY on server)"
+                  }
+                >
+                  via {currentEntry.provider}
                 </span>
                 {currentEntry.notes}
               </p>
