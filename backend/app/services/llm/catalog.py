@@ -75,23 +75,23 @@ MODEL_CATALOG: tuple[ModelEntry, ...] = (
     # Gemini's free tier via Google's own API is more stable than
     # OpenRouter's aggregator arrangement — see Gemini 2.5 Flash above.
 
-    # ── OpenRouter — stealth / experimental (research use) ────────
-    # Ox Alpha: a reasoning model published under an anonymous
-    # 'stealth/' namespace on OpenRouter. Currently free but treat as
-    # ephemeral (see the free-tier note above). Provenance is
-    # deliberately unknown — the model runs on some third party's
-    # infra; prompts we send it are visible to whoever hosts it.
-    # Suitable for research/experimentation, not for anything where
-    # sending portfolio + personal info to an unattributed operator
-    # would matter. Mandatory reasoning means calls take 30-90s;
-    # briefing prompts may bump the OpenRouterClient 90s timeout.
+    # ── OpenRouter — free / research (add cautiously) ─────────────
+    # (Ox Alpha stealth/ox-alpha was pulled from OpenRouter within
+    # ~48h of listing — Aug 28 2026. Removed here so validate-on-save
+    # doesn't let admins step on it. If a similar stealth model
+    # appears, add it with the same tier=free + "may vanish" hint.)
+    #
+    # Ling 3.0 Flash Fin is a finance-tuned free model (inclusion AI).
+    # Genuinely interesting fit for the news scoring workload —
+    # small, fast, domain-specialised. Verify availability before
+    # recommending broadly.
     ModelEntry(
-        id="stealth/ox-alpha",
+        id="inclusionai/ling-3.0-flash-fin:free",
         provider="openrouter",
-        label="Ox Alpha (stealth, free)",
+        label="Ling 3.0 Flash Fin (free)",
         tier="free",
-        notes="Reasoning model, 1M context, currently free. Anonymous provider — see notes. Slow (30-90s).",
-        price_hint="Free (beta, may vanish)",
+        notes="Finance-tuned small model. Good fit for news sentiment. Free-tier may rotate.",
+        price_hint="Free (may rotate)",
     ),
 
     # ── OpenRouter — cheap paid (pennies at Jarvis volume) ────────
