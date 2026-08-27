@@ -38,7 +38,11 @@ from app.data.sp500 import SP500
 log = logging.getLogger(__name__)
 
 CACHE_KEY = "heatmap:sp500"
-CACHE_TTL = 1800  # 30 minutes — aligned with frontend staleTime and Celery pre-warm interval
+# 10 min TTL matches the Celery pre-warm interval + frontend refetchInterval.
+# Previously 30 min but 30 min stale × 30 min client staleTime meant worst-case
+# 60-min-old data on the dashboard, which felt broken during active trading
+# hours. 10 min is still 4x the ~2.5-min fetch time so pre-warm never overlaps.
+CACHE_TTL = 600  # 10 minutes
 
 # fast_info per-ticker is sequential by default. yfinance's underlying
 # requests session is thread-safe enough for ~10 concurrent calls without

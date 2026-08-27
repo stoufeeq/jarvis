@@ -277,7 +277,12 @@ export default function HeatmapPage() {
   const { data, isFetching, dataUpdatedAt, error } = useQuery<HeatmapResponse>({
     queryKey: ["heatmap"],
     queryFn:  () => marketApi.heatmap().then((r) => r.data),
-    staleTime: 30 * 60 * 1000,  // 30 min — matches backend cache TTL
+    // 5-min poll matches the dashboard's cadence. Backend TTL is 10 min
+    // and pre-warm runs every 10 min, so the client always sees data
+    // within one refresh cycle of real.
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
+    refetchOnWindowFocus: true,
     retry: 1,
   });
 

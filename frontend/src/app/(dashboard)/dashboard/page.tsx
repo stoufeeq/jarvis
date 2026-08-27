@@ -82,7 +82,13 @@ export default function DashboardPage() {
   const { data: heatmapData } = useQuery({
     queryKey: ["heatmap"],
     queryFn: () => marketApi.heatmap().then((r) => r.data),
-    staleTime: 30 * 60 * 1000,  // 30 min — shared cache with /heatmap page
+    // Backend Redis cache is 10 min and Celery pre-warms every 10 min, so
+    // polling every 5 min keeps the dashboard within one refresh cycle of
+    // real. refetchOnWindowFocus catches the case of returning to the tab
+    // after an hour away.
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
+    refetchOnWindowFocus: true,
   });
 
   const { data: liquidity } = useQuery<LiquidityResponse>({

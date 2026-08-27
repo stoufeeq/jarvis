@@ -85,11 +85,13 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.news_digest.fetch_and_process_news",
         "schedule": crontab(hour=16, minute=30),
     },
-    # Pre-warm the S&P 500 heatmap cache every 30 min so dashboard/heatmap
+    # Pre-warm the S&P 500 heatmap cache every 10 min so dashboard/heatmap
     # never wait for the ~450 yfinance fetch. Task self-skips on weekends/holidays.
+    # 10 min matches the Redis TTL — data on the dashboard is at most one
+    # refresh cycle stale. Fetch takes ~2.5 min so there's ample headroom.
     "warm-heatmap-cache": {
         "task": "app.workers.tasks.heatmap_warm.warm_heatmap_cache",
-        "schedule": 1800,  # every 30 minutes
+        "schedule": 600,  # every 10 minutes
     },
     # Snapshot signal outcomes (1d/5d/30d/90d post-signal prices) every 6h.
     # Snapshots are sourced from historical close prices so frequency only
