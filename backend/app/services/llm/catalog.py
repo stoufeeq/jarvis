@@ -94,6 +94,19 @@ MODEL_CATALOG: tuple[ModelEntry, ...] = (
         price_hint="Free (may rotate)",
     ),
 
+    # ── OpenRouter's own routing (stable — it's their product) ────
+    # openrouter/auto is a good "just make it work" pick for chat where
+    # variety is fine. Avoid for briefing (voice/format will shift
+    # between models) and news scoring (JSON compliance varies).
+    ModelEntry(
+        id="openrouter/auto",
+        provider="openrouter",
+        label="OpenRouter Auto (routed)",
+        tier="cheap",
+        notes="Auto-routes to a well-rated model per prompt. Non-deterministic across calls.",
+        price_hint="Variable (avg ~$0.50/M in)",
+    ),
+
     # ── OpenRouter — cheap paid (pennies at Jarvis volume) ────────
     ModelEntry(
         id="deepseek/deepseek-chat-v3.1",
