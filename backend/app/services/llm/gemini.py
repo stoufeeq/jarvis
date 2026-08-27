@@ -39,7 +39,15 @@ class GeminiClient(LLMClient):
             log.warning("Gemini complete() failed on model=%s: %s", model, exc)
             raise LLMError(f"Gemini complete failed: {exc}") from exc
 
-    async def chat(self, messages: list[Message], *, model: str, temperature: float = 0.4) -> str:
+    async def chat(
+        self,
+        messages: list[Message],
+        *,
+        model: str,
+        temperature: float = 0.4,
+        max_tokens: int | None = None,
+        timeout: float | None = None,  # noqa: ARG002 — SDK doesn't expose per-call timeout
+    ) -> str:
         try:
             # Gemini's role names differ ("user"/"model" rather than
             # "user"/"assistant"). System messages are prepended to the
@@ -55,9 +63,12 @@ class GeminiClient(LLMClient):
             if not history:
                 raise LLMError("chat() called with no user/assistant messages")
 
+            gen_config: dict[str, float | int] = {"temperature": temperature}
+            if max_tokens is not None:
+                gen_config["max_output_tokens"] = max_tokens
             gen_model = genai.GenerativeModel(
                 model_name=model,
-                generation_config={"temperature": temperature},
+                generation_config=gen_config,  # type: ignore[arg-type]
                 system_instruction=system_instructions or None,
             )
             # Last message is the current turn; preceding history seeds

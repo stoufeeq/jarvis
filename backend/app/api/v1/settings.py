@@ -99,12 +99,14 @@ async def update_model_settings(
     to this, a stored bad value could silently break the daily
     briefing or advisor chat.
     """
+    import asyncio as _asyncio
     from app.services.llm import LLMError, Message, resolve_client
 
     # ── Pre-save validation ──────────────────────────────────────
-    # Only test the fields the admin actually set to a non-null
-    # value. Absent fields = no change (no test); None = clear the
-    # override (no model to test against).
+    # Test each non-null model with a tiny ping. Runs in parallel so
+    # total wait = slowest single test, not the sum. Uses a 30s cap
+    # (down from the client's 90s default) + max_tokens=5 so reasoning
+    # models don't burn tokens or block the UI on validation.
     fields_set = payload.model_fields_set
     task_field_map: dict[TaskType, str] = {
         "news": "news_model",
@@ -112,38 +114,52 @@ async def update_model_settings(
         "chat": "chat_model",
     }
     to_persist: list[tuple[TaskType, str | None]] = []
+    to_validate: list[tuple[str, str]] = []  # (label, model_id) pairs to smoke-test
     for task, field in task_field_map.items():
         if field not in fields_set:
             continue
         value = getattr(payload, field)
         to_persist.append((task, value))
         if value:
-            # Quick end-to-end sanity check: instantiate the client,
-            # send one tiny completion. Any provider error surfaces
-            # here as a 422 with the raw message.
-            try:
-                client = resolve_client(value)
-                await client.chat(
-                    [Message(role="user", content="ping")],
-                    model=value,
-                    temperature=0.0,
-                )
-            except LLMError as exc:
+            to_validate.append((task, value))
+
+    VALIDATE_TIMEOUT = 30.0
+    VALIDATE_MAX_TOKENS = 5
+
+    async def _validate(label: str, value: str) -> tuple[str, str, Exception | None]:
+        """Returns (label, model_id, error_or_None). We collect errors
+        instead of raising so a single slow model doesn't hide others."""
+        try:
+            client = resolve_client(value)
+            await client.chat(  # type: ignore[call-arg]
+                [Message(role="user", content="ping")],
+                model=value,
+                temperature=0.0,
+                max_tokens=VALIDATE_MAX_TOKENS,
+                timeout=VALIDATE_TIMEOUT,
+            )
+            return (label, value, None)
+        except Exception as exc:
+            return (label, value, exc)
+
+    if to_validate:
+        results = await _asyncio.gather(*(_validate(t, v) for t, v in to_validate))
+        for label, value, err in results:
+            if err is None:
+                continue
+            if isinstance(err, LLMError):
                 raise HTTPException(
                     status_code=422,
                     detail=(
-                        f"Model {value!r} rejected by provider: {exc}. "
+                        f"Model {value!r} rejected by provider: {err}. "
                         "Check openrouter.ai/models (or your Gemini quota) "
                         "and pick an available model."
                     ),
                 )
-            except Exception as exc:
-                # Non-LLMError probably means missing API key or
-                # config bug. Same 422 for a coherent UI experience.
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Model {value!r} could not be initialised: {exc}",
-                )
+            raise HTTPException(
+                status_code=422,
+                detail=f"Model {value!r} could not be initialised: {err}",
+            )
 
     # ── Persist (only after every value passed its smoke test) ────
     svc = SystemSettingsService(db)

@@ -220,8 +220,13 @@ export function AdminModelsCard() {
           disabled={!dirty || mutation.isPending}
           className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50"
         >
-          {mutation.isPending ? "Saving…" : "Save changes"}
+          {mutation.isPending ? "Testing models…" : "Save changes"}
         </button>
+        {mutation.isPending && (
+          <span className="text-xs text-muted-foreground">
+            Pinging each model to verify it works (up to 30s)…
+          </span>
+        )}
         {dirty && (
           <button
             onClick={() => setDraft({})}

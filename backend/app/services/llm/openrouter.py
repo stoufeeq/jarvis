@@ -52,12 +52,23 @@ class OpenRouterClient(LLMClient):
             temperature=temperature,
         )
 
-    async def chat(self, messages: list[Message], *, model: str, temperature: float = 0.4) -> str:
+    async def chat(
+        self,
+        messages: list[Message],
+        *,
+        model: str,
+        temperature: float = 0.4,
+        max_tokens: int | None = None,
+        timeout: float | None = None,
+    ) -> str:
+        effective_timeout = timeout if timeout is not None else DEFAULT_TIMEOUT
         payload: dict[str, Any] = {
             "model": model,
             "temperature": temperature,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
         }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
@@ -66,7 +77,7 @@ class OpenRouterClient(LLMClient):
         }
 
         try:
-            async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            async with httpx.AsyncClient(timeout=effective_timeout) as client:
                 resp = await client.post(
                     f"{self._base_url}/chat/completions",
                     json=payload,

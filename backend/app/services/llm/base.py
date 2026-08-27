@@ -48,5 +48,13 @@ class LLMClient(Protocol):
     async def complete(self, prompt: str, *, model: str, temperature: float = 0.4) -> str:
         ...
 
-    async def chat(self, messages: list[Message], *, model: str, temperature: float = 0.4) -> str:
+    async def chat(
+        self,
+        messages: list[Message],
+        *,
+        model: str,
+        temperature: float = 0.4,
+        max_tokens: int | None = None,
+        timeout: float | None = None,
+    ) -> str:
         ...
