@@ -546,11 +546,28 @@ function TopMovers({
         </div>
       </div>
 
-      {cachedAt && (
-        <p className="text-xs text-muted-foreground/50 mt-1.5 text-right">
-          Data as of {new Date(cachedAt * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-        </p>
-      )}
+      {cachedAt && (() => {
+        // Show both the absolute time (comforting anchor) and the age
+        // in seconds/minutes (actionable — user can see "this is 12 min
+        // old, probably worth a refresh"). Colour indicates staleness
+        // against the 10-min backend cache cycle: green under 3 min,
+        // amber under 10, red beyond.
+        const ageSec = Math.max(0, Math.round(Date.now() / 1000 - cachedAt));
+        const ageStr =
+          ageSec < 60 ? `${ageSec}s` :
+          ageSec < 3600 ? `${Math.floor(ageSec / 60)}m ago` :
+          `${Math.floor(ageSec / 3600)}h ago`;
+        const colour =
+          ageSec < 180 ? "text-emerald-500/70" :
+          ageSec < 600 ? "text-amber-500/70" :
+          "text-red-500/70";
+        return (
+          <p className={`text-xs ${colour} mt-1.5 text-right`}
+             title={`Backend cache written ${new Date(cachedAt * 1000).toLocaleString()}`}>
+            Data {ageStr}
+          </p>
+        );
+      })()}
     </section>
   );
 }

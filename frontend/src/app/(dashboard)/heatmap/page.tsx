@@ -340,9 +340,32 @@ export default function HeatmapPage() {
     qc.invalidateQueries({ queryKey: ["heatmap"] });
   }, [qc]);
 
-  const updatedAgo = dataUpdatedAt
-    ? Math.round((Date.now() - dataUpdatedAt) / 1000)
-    : null;
+  // Prefer the backend's cached_at timestamp — that's when the data was
+  // actually fetched from yfinance. dataUpdatedAt (client fetch time) is
+  // meaningless as a freshness signal since a client refetch of the same
+  // cached backend value looks new but isn't. Fall back to client time
+  // only if the backend didn't return cached_at.
+  const dataAgeSec = data?.cached_at
+    ? Math.round(Date.now() / 1000 - data.cached_at)
+    : dataUpdatedAt
+      ? Math.round((Date.now() - dataUpdatedAt) / 1000)
+      : null;
+
+  // Colour the freshness badge: green under 3 min, amber under 10 min,
+  // red beyond. Matches the backend's 10-min pre-warm cycle — anything
+  // older than that is stale enough that a manual refresh would help.
+  function stalenessClass(sec: number | null): string {
+    if (sec == null) return "text-muted-foreground";
+    if (sec < 180) return "text-emerald-500";
+    if (sec < 600) return "text-amber-500";
+    return "text-red-500";
+  }
+
+  function fmtAge(sec: number): string {
+    if (sec < 60) return `${sec}s`;
+    if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`;
+    return `${Math.floor(sec / 3600)}h`;
+  }
 
   const treeData        = useMemo(
     () => data ? toTreeData(data, activeSectors, tickerFilter) : [],
@@ -372,9 +395,16 @@ export default function HeatmapPage() {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-2xl font-bold">Market Map</h1>
         <div className="flex items-center gap-3">
-          {updatedAgo !== null && !isFetching && (
-            <span className="text-xs text-muted-foreground">
-              Updated {updatedAgo < 60 ? `${updatedAgo}s` : `${Math.floor(updatedAgo / 60)}m`} ago
+          {dataAgeSec !== null && !isFetching && (
+            <span
+              className={`text-xs ${stalenessClass(dataAgeSec)}`}
+              title={
+                data?.cached_at
+                  ? `Backend cache written ${new Date(data.cached_at * 1000).toLocaleTimeString()}`
+                  : undefined
+              }
+            >
+              Data {fmtAge(dataAgeSec)} old
             </span>
           )}
           <button
