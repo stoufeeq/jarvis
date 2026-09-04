@@ -197,6 +197,56 @@ async def get_portfolio_risk(
     return await svc.compute_risk_metrics(p)
 
 
+@router.get("/{portfolio_id}/dividends")
+async def get_portfolio_dividends(
+    portfolio_id: int,
+    days_ahead: int = Query(60, ge=1, le=365),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Dividend income for this portfolio: received history, YTD /
+    trailing-12m totals, a forward estimate from current holdings, and
+    upcoming ex-dates within `days_ahead`.
+
+    Amounts are derived from shares-held-at-ex-date walked from the trade
+    ledger, so they stay correct after back-dated imports or trade edits.
+    See DividendService for the entitlement rule."""
+    from app.services.dividend import DividendService
+
+    svc = PortfolioService(db)
+    p = await svc.get(portfolio_id)
+    if not p:
+        raise NotFoundError("Portfolio not found")
+    _assert_owner(p, user)
+
+    dsvc = DividendService(db)
+    income = await dsvc.compute_income(p)
+    income["upcoming"] = await dsvc.upcoming(p, days_ahead=days_ahead)
+    return income
+
+
+@router.post("/{portfolio_id}/dividends/sync")
+async def sync_portfolio_dividends(
+    portfolio_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pull fresh dividend events from yfinance for every ticker this
+    portfolio has ever traded. Runs nightly via Celery too; this is the
+    manual 'refresh now' path."""
+    from app.services.dividend import DividendService
+
+    svc = PortfolioService(db)
+    p = await svc.get(portfolio_id)
+    if not p:
+        raise NotFoundError("Portfolio not found")
+    _assert_owner(p, user)
+
+    result = await DividendService(db).sync_for_portfolio(p)
+    await db.commit()
+    return result
+
+
 @router.patch("/{portfolio_id}", response_model=PortfolioRead)
 async def update_portfolio(
     portfolio_id: int,

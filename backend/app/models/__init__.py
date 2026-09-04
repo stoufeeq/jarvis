@@ -2,6 +2,7 @@ from app.models.account import Account, AccountBalance, AccountTransaction
 from app.models.alert import Alert
 from app.models.calendar_event import CalendarEvent
 from app.models.conversation import ChatMessage, Conversation
+from app.models.dividend import Dividend
 from app.models.halal_compliance import HalalCompliance
 from app.models.insider_trade import InsiderTrade
 from app.models.market_regime import MarketRegime

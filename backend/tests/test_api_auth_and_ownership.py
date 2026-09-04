@@ -94,6 +94,7 @@ PROTECTED_ROUTES = [
     ("GET", "/api/v1/advisor/conversations"),
     ("GET", "/api/v1/briefing/today"),
     ("GET", "/api/v1/market/quote/AAPL"),
+    ("GET", "/api/v1/portfolios/1/dividends"),
     ("GET", "/api/v1/settings/models"),
     ("GET", "/api/v1/settings/models/catalog"),
 ]
@@ -197,6 +198,8 @@ _VALID_TRADE = {
         ("POST", "/trades", _VALID_TRADE),
         ("GET", "/performance", None),
         ("GET", "/risk", None),
+        ("GET", "/dividends", None),
+        ("POST", "/dividends/sync", None),
     ],
 )
 @pytest.mark.asyncio

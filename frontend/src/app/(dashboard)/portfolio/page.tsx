@@ -10,6 +10,7 @@ import { PrivacyToggle } from "@/components/ui/PrivacyToggle";
 import { InlineChart } from "@/components/charts/InlineChart";
 import { PortfolioPerformanceChart } from "@/components/charts/PortfolioPerformanceChart";
 import { RiskTab } from "@/components/portfolio/RiskTab";
+import { DividendsTab } from "@/components/portfolio/DividendsTab";
 import { AnimatedNumber } from "@/components/ui/AnimatedNumber";
 import { usePrivacyStore } from "@/store/privacy";
 import { useTradingModeStore } from "@/store/tradingMode";
@@ -69,7 +70,7 @@ export default function PortfolioPage() {
   // Empty array = save as null (no restriction). Non-empty = save as CSV.
   const [editAllowedAccountIds, setEditAllowedAccountIds] = useState<number[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<"positions" | "trades" | "risk">("positions");
+  const [activeTab, setActiveTab] = useState<"positions" | "trades" | "dividends" | "risk">("positions");
   const [expandedTicker, setExpandedTicker] = useState<string | null>(null);
 
   // Sort state for positions
@@ -952,7 +953,7 @@ export default function PortfolioPage() {
 
           {/* Positions / Trades / Risk tabs */}
           <div className="flex gap-1 border-b border-border">
-            {(["positions", "trades", "risk"] as const).map((tab) => (
+            {(["positions", "trades", "dividends", "risk"] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -1135,6 +1136,14 @@ export default function PortfolioPage() {
                 </tbody>
               </table>
             </div>
+          )}
+
+          {/* Dividend income — received history, upcoming ex-dates, forward estimate */}
+          {activeTab === "dividends" && selectedId && (
+            <DividendsTab
+              portfolioId={selectedId}
+              currency={summary?.currency ?? "USD"}
+            />
           )}
 
           {/* Risk analytics tab — Sharpe, MDD, vol, beta/alpha, correlation matrix */}

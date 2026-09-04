@@ -85,6 +85,9 @@ export const portfolioApi = {
   performance: (id: number, period: string = "6mo") =>
     api.get(`/portfolios/${id}/performance`, { params: { period } }),
   risk: (id: number) => api.get(`/portfolios/${id}/risk`),
+  dividends: (id: number, daysAhead = 60) =>
+    api.get<DividendIncome>(`/portfolios/${id}/dividends`, { params: { days_ahead: daysAhead } }),
+  syncDividends: (id: number) => api.post(`/portfolios/${id}/dividends/sync`),
   trades: (id: number) => api.get(`/portfolios/${id}/trades`),
   addTrade: (id: number, data: object) => api.post(`/portfolios/${id}/trades`, data),
   updateTrade: (id: number, tradeId: number, data: object) =>
@@ -131,6 +134,28 @@ export const marketApi = {
   topSetups: (limit = 3, interval: "5m" | "15m" | "1h" = "15m") =>
     api.get<TopSetupsResponse>("/market/top-setups", { params: { limit, interval } }),
 };
+
+export interface DividendEvent {
+  ticker: string;
+  ex_date: string;
+  pay_date: string | null;
+  amount_per_share: number;
+  shares: number;
+  amount: number;
+  currency: string;
+}
+
+export interface DividendIncome {
+  base_currency: string;
+  ytd: number;
+  trailing_12m: number;
+  total_all_time: number;
+  forward_annual_estimate: number;
+  forward_yield_on_cost_pct: number | null;
+  received: DividendEvent[];
+  by_ticker: { ticker: string; amount: number }[];
+  upcoming: DividendEvent[];
+}
 
 export interface TopSetupsResponse {
   bulls: MomentumScoreResponse[];

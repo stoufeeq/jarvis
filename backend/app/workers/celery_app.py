@@ -15,6 +15,7 @@ celery_app = Celery(
         "app.workers.tasks.news_digest",
         "app.workers.tasks.insider_fetch",
         "app.workers.tasks.eightk_fetch",
+        "app.workers.tasks.dividend_sync",
         "app.workers.tasks.heatmap_warm",
         "app.workers.tasks.signal_outcome",
         "app.workers.tasks.calendar_refresh",
@@ -84,6 +85,14 @@ celery_app.conf.beat_schedule = {
     "news-digest-evening": {
         "task": "app.workers.tasks.news_digest.fetch_and_process_news",
         "schedule": crontab(hour=16, minute=30),
+    },
+    # Refresh dividend events nightly. Schedules move slowly (quarterly
+    # for most US names) so daily is generous — it exists so a newly
+    # declared dividend appears in "upcoming" before its ex-date.
+    # 5:00 UTC keeps it clear of the 6:00 insider fetch.
+    "sync-dividends": {
+        "task": "app.workers.tasks.dividend_sync.sync_all_dividends",
+        "schedule": crontab(hour=5, minute=0),
     },
     # Pre-warm the S&P 500 heatmap cache every 10 min so dashboard/heatmap
     # never wait for the ~450 yfinance fetch. Task self-skips on weekends/holidays.
