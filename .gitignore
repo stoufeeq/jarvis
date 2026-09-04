@@ -40,3 +40,4 @@ alembic/versions/*.pyc
 # Celery
 celerybeat-schedule
 celerybeat-schedule.db
+.coverage
