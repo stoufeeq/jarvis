@@ -11,9 +11,49 @@ env:
   FRONTEND_IMAGE: ghcr.io/stoufeeq/jarvis-frontend
 
 jobs:
+  # ─── Gate: backend test suite ────────────────────────────────────────────────
+  # Runs BEFORE anything is built or pushed, so a red suite stops the
+  # deploy instead of merely reporting alongside it. Previously tests
+  # lived only in test.yml, which triggers on the same push but is a
+  # separate workflow — it could go red while this workflow happily
+  # shipped the same commit to production.
+  #
+  # No services needed: the suite runs against in-memory SQLite with
+  # network calls (yfinance, FX, LLM providers) mocked, so it is
+  # deterministic and finishes in well under a minute.
+  test:
+    name: Backend tests (gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run pytest
+        working-directory: backend
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          DATABASE_URL_SYNC: "sqlite:///:memory:"
+          CELERY_BROKER_URL: "memory://"
+          CELERY_RESULT_BACKEND: "cache+memory://"
+          GEMINI_API_KEY: ""
+        run: pytest tests/ -q --tb=short
+
   # ─── Build Backend Image ─────────────────────────────────────────────────────
   build-backend:
     name: Build backend image
+    needs: [test]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -40,6 +80,7 @@ jobs:
   # ─── Build Frontend Image ────────────────────────────────────────────────────
   build-frontend:
     name: Build frontend image
+    needs: [test]
     runs-on: ubuntu-latest
     permissions:
       contents: read
