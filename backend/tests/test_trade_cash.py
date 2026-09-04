@@ -435,6 +435,117 @@ async def test_explicit_account_sell_credits_primary_currency_with_fx(db):
     assert txns[0].notes is not None and "FX:" in txns[0].notes
 
 
+# ── Multi-currency: FX within a chosen account ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_chosen_account_covers_shortfall_via_fx_from_own_currencies(db):
+    """A USD trade on an account holding some USD plus SGD drains the USD
+    first, then FX-converts from SGD to cover the rest — all within the
+    one account, never reaching into others."""
+    acct = await _mk_account(db, "Multi", {"USD": 400, "SGD": 5000})
+    other = await _mk_account(db, "Other USD", {"USD": 50_000})
+    p = await _mk_portfolio(db)
+    trade = await _mk_trade(db, p, quantity=10, price=100, account_id=acct.id)  # 1000 USD
+
+    # 1 SGD = 0.75 USD → the 600 USD shortfall needs 800 SGD.
+    with _fx({"SGD": 0.75}):
+        await TradeCashService(db).on_trade_created(p, trade)
+
+    assert await _balance_of(db, acct.id, "USD") == pytest.approx(0.0)
+    assert await _balance_of(db, acct.id, "SGD") == pytest.approx(4200.0)
+    # The other account is untouched — explicit selection is respected.
+    assert await _balance_of(db, other.id, "USD") == pytest.approx(50_000.0)
+
+    txns = await _txns_for_trade(db, trade.id)
+    assert len(txns) == 2
+    assert {t.currency for t in txns} == {"USD", "SGD"}
+
+
+@pytest.mark.asyncio
+async def test_chosen_account_fx_drains_largest_balance_first(db):
+    """When several foreign currencies could cover the shortfall, the
+    largest balance is used first so we touch as few currencies as
+    possible (each conversion costs spread in reality)."""
+    acct = await _mk_account(db, "Multi", {"USD": 0, "SGD": 100, "EUR": 5000})
+    p = await _mk_portfolio(db)
+    trade = await _mk_trade(db, p, quantity=1, price=100, account_id=acct.id)  # 100 USD
+
+    with _fx({"SGD": 0.75, "EUR": 1.10}):
+        await TradeCashService(db).on_trade_created(p, trade)
+
+    # EUR is the larger balance so it covers the whole 100 USD alone.
+    assert await _balance_of(db, acct.id, "SGD") == pytest.approx(100.0)
+    assert await _balance_of(db, acct.id, "EUR") == pytest.approx(5000 - 100 / 1.10)
+
+
+@pytest.mark.asyncio
+async def test_chosen_account_insufficient_even_after_fx_raises(db):
+    """Exhausting every currency in the account and still falling short
+    is a 400 — we never spill into other accounts."""
+    acct = await _mk_account(db, "Multi", {"USD": 10, "SGD": 20})
+    p = await _mk_portfolio(db)
+    trade = await _mk_trade(db, p, quantity=10, price=100, account_id=acct.id)
+
+    with _fx({"SGD": 0.75}):
+        with pytest.raises(HTTPException) as exc:
+            await TradeCashService(db).on_trade_created(p, trade)
+    assert exc.value.status_code == 400
+    assert "after draining" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_chosen_account_skips_currency_with_no_fx_rate(db):
+    """A currency we can't price is skipped rather than converted at a
+    guessed rate — better to reject the trade than to move the wrong
+    amount of money."""
+    acct = await _mk_account(db, "Multi", {"USD": 100, "XYZ": 999_999})
+    p = await _mk_portfolio(db)
+    trade = await _mk_trade(db, p, quantity=10, price=100, account_id=acct.id)
+
+    # No rate offered for XYZ.
+    with _fx({}):
+        with pytest.raises(HTTPException) as exc:
+            await TradeCashService(db).on_trade_created(p, trade)
+    assert exc.value.status_code == 400
+    # The unpriceable balance must be left alone.
+    assert await _balance_of(db, acct.id, "XYZ") == pytest.approx(999_999.0)
+
+
+@pytest.mark.asyncio
+async def test_credit_falls_back_to_usd_when_no_account_holds_trade_currency(db):
+    """Sell proceeds in a currency nobody holds land in USD, FX-converted,
+    rather than silently creating a balance in an unmanaged currency."""
+    acct = await _mk_account(db, "USD only", {"USD": 1000})
+    p = await _mk_portfolio(db)
+    trade = await _mk_trade(db, p, action=TradeAction.sell, quantity=10,
+                            price=100, currency="GBP")  # 1000 GBP proceeds
+
+    with _fx({"GBP": 1.25}):
+        await TradeCashService(db).on_trade_created(p, trade)
+
+    assert await _balance_of(db, acct.id, "USD") == pytest.approx(2250.0)
+    assert await _balance_of(db, acct.id, "GBP") == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_debit_uses_fallback_chain_across_currencies(db):
+    """With no explicit account, a USD shortfall pulls from SGD via the
+    USD → SGD → EUR priority chain."""
+    usd = await _mk_account(db, "USD", {"USD": 400},
+                            created_at=datetime(2020, 1, 1, tzinfo=UTC))
+    sgd = await _mk_account(db, "SGD", {"SGD": 5000},
+                            created_at=datetime(2021, 1, 1, tzinfo=UTC))
+    p = await _mk_portfolio(db)
+    trade = await _mk_trade(db, p, quantity=10, price=100)  # 1000 USD
+
+    with _fx({"SGD": 0.75}):
+        await TradeCashService(db).on_trade_created(p, trade)
+
+    assert await _balance_of(db, usd.id, "USD") == pytest.approx(0.0)
+    assert await _balance_of(db, sgd.id, "SGD") == pytest.approx(4200.0)
+
+
 # ── Reversal (edit / delete) ──────────────────────────────────────────
 
 

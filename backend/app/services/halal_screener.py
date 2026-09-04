@@ -46,11 +46,31 @@ def _load_whitelist() -> dict[str, Any]:
         return json.load(f)
 
 
+def _normalise_label(value: str) -> str:
+    """Canonicalise a sector/industry label for set membership.
+
+    yfinance is inconsistent about the separator in compound industry
+    names — the same industry arrives as "Banks—Diversified" (em-dash),
+    "Banks-Diversified" (hyphen), or "Banks - Diversified" (spaced
+    hyphen) depending on the version and the endpoint that served it.
+    The whitelist stores one spelling, so an exact lowercase match
+    silently lets the other spellings through: a bank would screen as
+    COMPLIANT purely because of a dash character. Normalising both
+    sides removes that class of false pass.
+    """
+    out = value.lower().strip()
+    for dash in ("\u2014", "\u2013", "\u2212"):  # em, en, minus
+        out = out.replace(dash, "-")
+    # Collapse spacing around the separator and any repeated whitespace.
+    out = out.replace(" - ", "-").replace(" -", "-").replace("- ", "-")
+    return " ".join(out.split())
+
+
 # Loaded once at import time; whitelist is small + rarely changes.
 _WHITELIST = _load_whitelist()
 _COMPLIANT_ETFS: dict[str, str] = _WHITELIST.get("etfs_compliant", {})
-_BANNED_INDUSTRIES = {s.lower() for s in _WHITELIST.get("banned_industries", [])}
-_BANNED_SECTORS = {s.lower() for s in _WHITELIST.get("banned_sectors", [])}
+_BANNED_INDUSTRIES = {_normalise_label(s) for s in _WHITELIST.get("banned_industries", [])}
+_BANNED_SECTORS = {_normalise_label(s) for s in _WHITELIST.get("banned_sectors", [])}
 
 
 def _finite(value: Any) -> float | None:
@@ -193,7 +213,7 @@ class HalalScreenerService:
 
         # Equity screen ──────────────────────────────────────────────────────
         # 1. Business activity
-        if industry and industry.lower() in _BANNED_INDUSTRIES:
+        if industry and _normalise_label(industry) in _BANNED_INDUSTRIES:
             return {
                 "status": HalalStatus.non_compliant,
                 "reason": f"Industry: {industry}",
@@ -201,7 +221,7 @@ class HalalScreenerService:
                 "sector": sector,
                 "industry": industry,
             }
-        if (not industry) and sector and sector.lower() in _BANNED_SECTORS:
+        if (not industry) and sector and _normalise_label(sector) in _BANNED_SECTORS:
             return {
                 "status": HalalStatus.non_compliant,
                 "reason": f"Sector: {sector}",
