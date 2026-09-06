@@ -55,7 +55,6 @@ from app.models.watchlist import Watchlist, WatchlistItem
 from app.services.market_data import MarketDataService
 from app.services.momentum_score import (
     ALLOWED_INTERVALS,
-    PERIOD_FOR_INTERVAL,
     _price_vs_emas_component,
     _session_vwap,
     _stack_component,
@@ -65,6 +64,23 @@ from app.services.momentum_score import (
 )
 
 VERDICT_ORDER = ("strong_bull", "bull", "neutral", "bear", "strong_bear")
+
+# Maximum history yfinance will serve per intraday interval. The live
+# momentum scorer uses a much shorter window (it only needs enough bars
+# to score the present moment) — reusing that here silently capped an
+# earlier version of this script at 8 usable sessions, which produced
+# spectacular-looking but meaningless results: with every ticker sharing
+# the same handful of market days, the "signal" was just those days'
+# direction. Always pull the full window for a backtest.
+MAX_PERIOD_FOR_INTERVAL = {
+    "5m":  "60d",    # ~60 sessions
+    "15m": "60d",    # ~60 sessions
+    "1h":  "730d",   # ~730 sessions — much the best sample, coarser entry timing
+}
+
+# Below this many distinct sessions the result is one market regime, not
+# evidence. Warned about loudly rather than silently reported.
+MIN_SESSIONS_FOR_CONFIDENCE = 40
 
 # Bars needed before the EMA(50) is meaningful. Sessions starting before
 # this point in the series are skipped entirely.
@@ -341,6 +357,13 @@ async def main():
     scope.add_argument("--user-id", type=int)
     parser.add_argument("--interval", default="15m", choices=list(ALLOWED_INTERVALS))
     parser.add_argument(
+        "--period", default=None,
+        help="History window. Defaults to the maximum yfinance serves for the "
+             "interval (15m/5m → 60d ≈ 60 sessions; 1h → 730d ≈ 730 sessions). "
+             "Only shorten this deliberately — a small session count makes the "
+             "whole result a read on a few market days rather than on the signal.",
+    )
+    parser.add_argument(
         "--entry-bar", type=int, default=2,
         help="Bar index within the session to evaluate and enter at. "
              "0 = the opening bar (VWAP uninformative there). "
@@ -376,7 +399,8 @@ async def main():
             tickers.add(t.strip().upper())
     ticker_list = sorted(tickers)
 
-    print(f"Fetching {args.interval} bars (period={PERIOD_FOR_INTERVAL[args.interval]}) "
+    period = args.period or MAX_PERIOD_FOR_INTERVAL[args.interval]
+    print(f"Fetching {args.interval} bars (period={period}) "
           f"for {len(ticker_list)} tickers …")
 
     mds = MarketDataService()
@@ -386,7 +410,7 @@ async def main():
         async with sem:
             try:
                 df = await mds.get_ohlcv_dataframe(
-                    t, period=PERIOD_FOR_INTERVAL[args.interval], interval=args.interval,
+                    t, period=period, interval=args.interval,
                 )
                 return _replay(df, t, args.entry_bar, args.min_session_bars)
             except Exception as exc:
@@ -403,10 +427,26 @@ async def main():
         "ret": t.ret, "bars_held": t.bars_held,
     } for t in trades])
 
+    n_sessions = pooled["session"].nunique()
     print(f"Replayed {len(pooled):,} ticker-sessions across "
           f"{pooled['ticker'].nunique()} tickers, "
-          f"{pooled['session'].nunique()} sessions. "
+          f"{n_sessions} sessions. "
           f"Median hold {int(pooled['bars_held'].median())} bars.")
+
+    if n_sessions < MIN_SESSIONS_FOR_CONFIDENCE:
+        print()
+        print("  " + "!" * 72)
+        print(f"  !! ONLY {n_sessions} DISTINCT SESSIONS — results below are NOT evidence.")
+        print("  !!")
+        print("  !! Every ticker shares the same few market days, so the trades are")
+        print("  !! not independent observations. If those days happened to trend up,")
+        print("  !! every verdict looks profitable and the 'edge' is just the market's")
+        print("  !! direction. A reliable tell: check whether strong_bear is also")
+        print("  !! positive in the table below. If it is, you are reading the market,")
+        print("  !! not the signal.")
+        print("  !!")
+        print(f"  !! Use --interval 1h (≈730 sessions) or --period 60d at 15m.")
+        print("  " + "!" * 72)
 
     cost = args.cost_bps / 10000.0
     _print_by_verdict(pooled, cost, args.entry_bar, args.interval)
