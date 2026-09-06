@@ -227,22 +227,33 @@ def _replay(df: pd.DataFrame, ticker: str, entry_bar: int, min_session_bars: int
 
 
 def _stats(rets: pd.Series, cost: float) -> dict:
-    """Per-trade stats, net of one round-trip cost. Sharpe here is
-    per-trade (mean/std), annualised at ~252 trades/yr since the
-    strategy takes at most one position per session."""
+    """Per-trade stats, net of one round-trip cost.
+
+    Includes a t-statistic on the mean. Without it a small sample can
+    show a healthy-looking mean and Sharpe that are pure noise: an
+    earlier version of this script gave a pass to a +0.085% result on
+    683 trades whose t-stat was 0.81, i.e. indistinguishable from zero.
+    Sharpe alone cannot catch that — it says nothing about how many
+    observations produced it."""
     net = rets - cost
     if len(net) == 0:
         return {"n": 0, "mean_pct": 0.0, "sharpe": 0.0, "hit_pct": 0.0,
-                "ann_pct": 0.0, "worst_pct": 0.0, "best_pct": 0.0}
+                "ann_pct": 0.0, "worst_pct": 0.0, "best_pct": 0.0,
+                "t_stat": 0.0, "se_pct": 0.0}
     sd = float(net.std())
+    n = len(net)
+    mean = float(net.mean())
+    se = sd / np.sqrt(n) if n > 0 else float("nan")
     return {
-        "n": len(net),
-        "mean_pct": float(net.mean() * 100),
-        "sharpe": float(net.mean() / sd * np.sqrt(252)) if sd > 0 else 0.0,
-        "hit_pct": float((net > 0).sum() / len(net) * 100),
-        "ann_pct": float(net.mean() * 252 * 100),
+        "n": n,
+        "mean_pct": mean * 100,
+        "sharpe": float(mean / sd * np.sqrt(252)) if sd > 0 else 0.0,
+        "hit_pct": float((net > 0).sum() / n * 100),
+        "ann_pct": mean * 252 * 100,
         "worst_pct": float(net.min() * 100),
         "best_pct": float(net.max() * 100),
+        "se_pct": se * 100 if se == se else 0.0,
+        "t_stat": float(mean / se) if se and se == se and se > 0 else 0.0,
     }
 
 
@@ -296,6 +307,8 @@ def _print_strategy(pooled: pd.DataFrame, gate: set[str], cost: float) -> dict:
     print(f"  Traded on {activity:.1f}% of sessions → effective annual {effective:+.2f}%")
     print(f"  Δ vs unconditional: mean {gated['mean_pct'] - base['mean_pct']:+.4f} pp, "
           f"Sharpe {gated['sharpe'] - base['sharpe']:+.2f}")
+    print(f"  Mean ± 1 SE: {gated['mean_pct']:+.4f}% ± {gated['se_pct']:.4f}%   "
+          f"t = {gated['t_stat']:+.2f}")
 
     # Hit rate is reported but deliberately NOT a gate: a positive-
     # expectancy strategy that wins 48% of the time with larger winners
@@ -303,20 +316,33 @@ def _print_strategy(pooled: pd.DataFrame, gate: set[str], cost: float) -> dict:
     # What matters is (a) positive net expectancy and (b) beating the
     # unconditional baseline on risk-adjusted return.
     sharpe_lift = gated["sharpe"] - base["sharpe"]
+    t = gated["t_stat"]
+    significant = abs(t) >= 1.96
+
     if gated["mean_pct"] <= 0:
         print("  ✗ Negative expectancy net of cost. Do not deploy.")
+        if significant:
+            print(f"    (and t={t:+.2f} — the loss is statistically real, not noise)")
+    elif not significant:
+        # The important guard. A pretty mean and Sharpe on a small sample
+        # says nothing; require the effect to be distinguishable from zero
+        # before calling it an edge.
+        needed = int((gated["se_pct"] * np.sqrt(gated["n"]) * 1.96 / gated["mean_pct"]) ** 2) \
+            if gated["mean_pct"] else 0
+        print(f"  ~ Positive mean but t={t:+.2f} — NOT distinguishable from zero.")
+        print(f"    On {gated['n']:,} trades this is noise, however good the Sharpe looks.")
+        if needed > gated["n"]:
+            print(f"    Would need roughly {needed:,} trades at this effect size to be credible.")
     elif sharpe_lift > 0.3:
-        print(f"  ✓ Positive expectancy AND {sharpe_lift:+.2f} Sharpe over the")
-        print("    unconditional baseline — the filter is doing real work.")
-        if gated["n"] < 200:
-            print(f"    ⚠ Only {gated['n']} trades though — treat as provisional.")
+        print(f"  ✓ Positive expectancy (t={t:+.2f}) AND {sharpe_lift:+.2f} Sharpe over")
+        print("    the unconditional baseline — the filter is doing real work.")
     elif sharpe_lift > 0:
-        print("  ~ Positive expectancy but only a small edge over trading every")
-        print("    session. The filter adds little; check whether the effective")
-        print("    annual return justifies the operational cost.")
+        print(f"  ~ Statistically positive (t={t:+.2f}) but only a small edge over")
+        print("    trading every session. Check the effective annual return against")
+        print("    the operational cost of running it.")
     else:
-        print("  ✗ Positive mean, but no better than trading unconditionally —")
-        print("    the momentum filter is not selecting anything useful.")
+        print(f"  ✗ Statistically positive (t={t:+.2f}) but no better than trading")
+        print("    unconditionally — the filter is not selecting anything useful.")
     return {"gated": gated, "base": base, "activity": activity, "effective": effective}
 
 
