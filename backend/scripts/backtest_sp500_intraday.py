@@ -205,6 +205,24 @@ def _score_ticker(ticker: str, df: pd.DataFrame, entry_bar: int, min_bars: int) 
 
 
 @dataclass
+class TradeRecord:
+    """One round trip, kept so losses can be attributed to names and
+    sessions rather than only counted. Without this you can't tell a
+    signal that is broadly useless from one poisoned by a handful of
+    tickers — which are very different problems with different fixes."""
+    session: str
+    ticker: str
+    entry: float
+    exit: float
+    position: float
+    gross: float
+    commission: float
+    spread: float
+    net: float
+    net_pct: float
+
+
+@dataclass
 class SimResult:
     equity: list[tuple[str, float]] = field(default_factory=list)
     n_trades: int = 0
@@ -217,6 +235,7 @@ class SimResult:
     losses: int = 0
     per_trade_returns: list[float] = field(default_factory=list)
     skipped_too_small: int = 0
+    trades: list[TradeRecord] = field(default_factory=list)
 
 
 def _simulate(
@@ -285,6 +304,12 @@ def _simulate(
             res.commission_paid += commission
             res.spread_paid += spread
             res.per_trade_returns.append(net / per_slot)
+            res.trades.append(TradeRecord(
+                session=c.session, ticker=c.ticker,
+                entry=c.entry, exit=c.exit, position=per_slot,
+                gross=gross, commission=commission, spread=spread,
+                net=net, net_pct=net / per_slot * 100,
+            ))
             if net > 0:
                 res.wins += 1
             else:
@@ -397,6 +422,95 @@ def _print_report(res: SimResult, capital: float, args, bench: dict | None) -> N
         print("  ✓ Profitable, statistically real, and beat the benchmark.")
 
 
+def _print_loss_breakdown(res: SimResult, top_n: int, csv_path: str | None) -> None:
+    """Attribute losses to tickers and to individual trades.
+
+    The question this answers: is the strategy broadly unprofitable, or
+    is it dragged down by a few names? Those need different responses —
+    a broad failure means the signal doesn't work, while concentrated
+    damage suggests an exclusion list or a liquidity/volatility filter.
+
+    The 'gross' column matters as much as net: a ticker whose gross P&L
+    is positive but net is negative was killed by commission, not by the
+    signal being wrong about it.
+    """
+    if not res.trades:
+        return
+
+    df = pd.DataFrame([t.__dict__ for t in res.trades])
+    losers = df[df["net"] <= 0]
+    won = df[df["net"] > 0]
+
+    print(f"\n{_hr()}")
+    print(" LOSS BREAKDOWN")
+    print(_hr())
+    print(f"  Losing trades         {len(losers):,} of {len(df):,}  "
+          f"({len(losers) / len(df) * 100:.1f}%)")
+    print(f"  Total lost on those   ${losers['net'].sum():,.2f}")
+    print(f"  Total won on winners  ${won['net'].sum():,.2f}")
+    if len(losers):
+        print(f"  Average loser         ${losers['net'].mean():,.2f}  "
+              f"({losers['net_pct'].mean():+.3f}%)")
+    if len(won) and len(losers):
+        print(f"  Average winner        ${won['net'].mean():,.2f}  "
+              f"({won['net_pct'].mean():+.3f}%)")
+        print(f"  Win/loss size ratio   {abs(won['net'].mean() / losers['net'].mean()):.2f}"
+              f"   (>1 means winners are bigger)")
+
+    # Trades that made money before costs and lost it after — the single
+    # most decision-relevant number here.
+    killed = df[(df["gross"] > 0) & (df["net"] <= 0)]
+    print()
+    print(f"  Profitable before costs, losing after: {len(killed):,} trades")
+    if len(killed):
+        print(f"    → made ${killed['gross'].sum():,.2f} gross, "
+              f"ended ${killed['net'].sum():,.2f} net")
+        print(f"    → costs alone flipped {len(killed) / len(df) * 100:.1f}% of ALL "
+              f"trades from winners to losers")
+
+    g = df.groupby("ticker").agg(
+        trades=("net", "size"),
+        wins=("net", lambda x: int((x > 0).sum())),
+        gross=("gross", "sum"),
+        commission=("commission", "sum"),
+        net=("net", "sum"),
+    )
+    g["win_rate"] = g["wins"] / g["trades"] * 100
+    g = g.sort_values("net")
+
+    def _table(rows, title):
+        print(f"\n  {title}")
+        print(f"  {'Ticker':<8} {'Trades':>7} {'Win%':>6} {'Gross$':>10} {'Comm$':>9} {'Net$':>10}")
+        print("  " + "─" * 56)
+        for tk, r in rows.iterrows():
+            print(f"  {tk:<8} {int(r['trades']):>7} {r['win_rate']:>5.0f}% "
+                  f"{r['gross']:>+10.2f} {-r['commission']:>9.2f} {r['net']:>+10.2f}")
+
+    _table(g.head(top_n), f"WORST {top_n} TICKERS BY NET P&L")
+    _table(g.tail(top_n).iloc[::-1], f"BEST {top_n} TICKERS BY NET P&L")
+
+    n_losing = int((g["net"] <= 0).sum())
+    print()
+    print(f"  {n_losing} of {len(g)} tickers ({n_losing / len(g) * 100:.0f}%) were net-negative.")
+    if n_losing / len(g) > 0.6:
+        print("  → Losses are BROAD, not concentrated. An exclusion list would not")
+        print("    rescue this — the signal isn't selecting winners anywhere.")
+    else:
+        print("  → Losses are CONCENTRATED. Worth checking what the worst names share")
+        print("    (price level, volatility, liquidity) before writing the idea off.")
+
+    print(f"\n  {top_n} LARGEST SINGLE LOSSES")
+    print(f"  {'Session':<12} {'Ticker':<8} {'Entry':>9} {'Exit':>9} {'Net$':>10} {'Net%':>8}")
+    print("  " + "─" * 60)
+    for _, r in df.nsmallest(top_n, "net").iterrows():
+        print(f"  {r['session']:<12} {r['ticker']:<8} {r['entry']:>9.2f} "
+              f"{r['exit']:>9.2f} {r['net']:>+10.2f} {r['net_pct']:>+7.2f}%")
+
+    if csv_path:
+        df.to_csv(csv_path, index=False)
+        print(f"\n  Full trade log → {csv_path} ({len(df):,} rows)")
+
+
 def _print_signal_frequency(candidates: list[Candidate], gate: set[str]) -> None:
     df = pd.DataFrame([{"session": c.session, "verdict": c.verdict} for c in candidates])
     total = len(df)
@@ -450,6 +564,10 @@ def main():
     parser.add_argument("--refresh", action="store_true", help="Ignore the bar cache.")
     parser.add_argument("--limit-tickers", type=int, default=None,
                         help="Debug: only use the first N constituents.")
+    parser.add_argument("--top-n", type=int, default=15,
+                        help="Rows per best/worst table in the loss breakdown.")
+    parser.add_argument("--export-trades", default=None, metavar="PATH",
+                        help="Write the full per-trade log to CSV for further digging.")
     args = parser.parse_args()
 
     tickers = [s["ticker"] for s in SP500]
@@ -502,6 +620,7 @@ def main():
             bench = {"total_ret": float((c.iloc[-1] / c.iloc[0] - 1) * 100)}
 
     _print_report(res, args.capital, args, bench)
+    _print_loss_breakdown(res, args.top_n, args.export_trades)
 
 
 if __name__ == "__main__":
