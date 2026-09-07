@@ -133,7 +133,19 @@ export const marketApi = {
     }),
   topSetups: (limit = 3, interval: "5m" | "15m" | "1h" = "15m") =>
     api.get<TopSetupsResponse>("/market/top-setups", { params: { limit, interval } }),
+  tickerHealth: () =>
+    api.get<{ unresolvable: UnresolvableTicker[] }>("/market/ticker-health"),
 };
+
+export interface UnresolvableTicker {
+  ticker: string;
+  consecutive_failures: number;
+  last_checked_at: string | null;
+  last_ok_at: string | null;
+  /** true = never resolved (likely a typo); false = worked before (likely delisted). */
+  never_resolved: boolean;
+  last_error: string | null;
+}
 
 export interface DividendEvent {
   ticker: string;

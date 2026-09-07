@@ -11,6 +11,7 @@ import { isCrypto } from "@/lib/crypto";
 import { TickerLink } from "@/components/ui/TickerLink";
 import { HalalBadge } from "@/components/ui/HalalBadge";
 import { MomentumBadge, useMomentumScoresBatch } from "@/components/ui/MomentumBadge";
+import { UnresolvableTickersBanner } from "@/components/ui/UnresolvableTickersBanner";
 import { useHalalCompliance } from "@/hooks/useHalalCompliance";
 import { useSettingsStore } from "@/store/settings";
 import type { Quote, WatchlistItem } from "@/types";
@@ -189,6 +190,10 @@ export default function WatchlistPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Watchlist</h1>
+
+      {/* Symbols the data provider can't resolve — these contribute
+          nothing to prices or signals until corrected. */}
+      <UnresolvableTickersBanner />
 
       {/* Add ticker */}
       <div className="flex gap-2">

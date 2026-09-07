@@ -16,6 +16,7 @@ celery_app = Celery(
         "app.workers.tasks.insider_fetch",
         "app.workers.tasks.eightk_fetch",
         "app.workers.tasks.dividend_sync",
+        "app.workers.tasks.ticker_health",
         "app.workers.tasks.heatmap_warm",
         "app.workers.tasks.signal_outcome",
         "app.workers.tasks.calendar_refresh",
@@ -93,6 +94,14 @@ celery_app.conf.beat_schedule = {
     "sync-dividends": {
         "task": "app.workers.tasks.dividend_sync.sync_all_dividends",
         "schedule": crontab(hour=5, minute=0),
+    },
+    # Probe every referenced ticker against the data provider daily at
+    # 04:30 UTC. With a 3-failure threshold a genuine typo surfaces
+    # within three days, while the transient 404s yfinance throws for
+    # real listings never trip the warning.
+    "check-ticker-health": {
+        "task": "app.workers.tasks.ticker_health.check_ticker_health",
+        "schedule": crontab(hour=4, minute=30),
     },
     # Pre-warm the S&P 500 heatmap cache every 10 min so dashboard/heatmap
     # never wait for the ~450 yfinance fetch. Task self-skips on weekends/holidays.

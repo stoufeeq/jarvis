@@ -11,6 +11,7 @@ import { InlineChart } from "@/components/charts/InlineChart";
 import { PortfolioPerformanceChart } from "@/components/charts/PortfolioPerformanceChart";
 import { RiskTab } from "@/components/portfolio/RiskTab";
 import { DividendsTab } from "@/components/portfolio/DividendsTab";
+import { UnresolvableTickersBanner } from "@/components/ui/UnresolvableTickersBanner";
 import { AnimatedNumber } from "@/components/ui/AnimatedNumber";
 import { usePrivacyStore } from "@/store/privacy";
 import { useTradingModeStore } from "@/store/tradingMode";
@@ -462,6 +463,10 @@ export default function PortfolioPage() {
           </button>
         </div>
       </div>
+
+      {/* Symbols the data provider can't resolve — these contribute
+          nothing to prices, P&L, signals or dividends until corrected. */}
+      <UnresolvableTickersBanner />
 
       {/* Create portfolio form */}
       {showCreate && (

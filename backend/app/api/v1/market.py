@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.database import get_db
 from app.models.user import User
 from app.services.market_data import MarketDataService
 from app.services.options_data import OptionsDataService
@@ -200,6 +202,22 @@ async def get_economic_calendar(
         results.append(e)
 
     return results
+
+
+@router.get("/ticker-health")
+async def get_ticker_health(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tickers in this user's positions or watchlist that the market-data
+    provider cannot resolve.
+
+    Only symbols that have failed on several consecutive daily checks
+    appear — yfinance 404s transiently for real listings, so a single
+    failure means nothing. See TickerHealthService for the threshold."""
+    from app.services.ticker_health import TickerHealthService
+
+    return {"unresolvable": await TickerHealthService(db).unresolvable_for_user(user.id)}
 
 
 @router.get("/momentum-score/{ticker}")
