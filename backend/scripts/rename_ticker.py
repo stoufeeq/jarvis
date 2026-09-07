@@ -104,20 +104,11 @@ async def run(old: str, new: str, apply: bool) -> None:
         new_trades = [t for t in trades if t.ticker.upper() == new]
         print(f"Trades: {len(old_trades)} as {old}, {len(new_trades)} as {new}")
 
-        # Currency mismatch would corrupt cost basis on merge — a EUR
-        # buy averaged against USD buys produces a meaningless number.
-        currencies = {(t.currency or "USD").upper() for t in trades}
-        if len(currencies) > 1:
-            print()
-            print(f"  ✗ REFUSING: trades span multiple currencies {sorted(currencies)}.")
-            print("    Merging would average prices denominated in different units.")
-            print("    Fix the currency on the affected trades first, then re-run.")
-            for t in trades:
-                print(f"      #{t.id}  {t.ticker:<8} {t.action.value:<5} "
-                      f"{float(t.quantity):>10.4f} @ {float(t.price):>10.4f} "
-                      f"{t.currency}  {t.traded_at.date()}")
-            return
-        print(f"Currency: {currencies.pop()} (consistent)")
+        # NOTE: currency is validated PER PORTFOLIO below, not globally.
+        # Trades in different portfolios are never merged with one another,
+        # so a EUR holding in a real portfolio and a USD paper position in
+        # another are not in conflict. An earlier version checked globally
+        # and aborted on exactly that, blocking a valid rename.
 
         # Group affected portfolios so each is rebuilt independently.
         by_portfolio: dict[int, list[Trade]] = defaultdict(list)
@@ -127,6 +118,7 @@ async def run(old: str, new: str, apply: bool) -> None:
         print()
         print(f"{'DRY RUN — no changes written' if not apply else 'APPLYING CHANGES'}")
         print("=" * 72)
+        skipped: list[int] = []
 
         for pid, ptrades in sorted(by_portfolio.items()):
             portfolio = await db.get(Portfolio, pid)
@@ -139,7 +131,25 @@ async def run(old: str, new: str, apply: bool) -> None:
                 )
             )).scalars().all())
 
-            print(f"\nPortfolio {pid} — {pname}")
+            broker = portfolio.broker.value if portfolio else "?"
+            print(f"\nPortfolio {pid} — {pname}  [{broker}]")
+
+            # Averaging prices denominated in different units gives a
+            # meaningless cost basis, so refuse — but only for the
+            # portfolio actually affected, leaving others processable.
+            pcurrencies = {(t.currency or "USD").upper() for t in ptrades}
+            if len(pcurrencies) > 1:
+                print(f"  ✗ SKIPPED: trades here span {sorted(pcurrencies)}.")
+                print("    Merging would average prices in different units.")
+                print("    Fix the currency on these trades first:")
+                for t in sorted(ptrades, key=lambda x: x.traded_at):
+                    print(f"      #{t.id}  {t.ticker:<8} {t.action.value:<5} "
+                          f"{float(t.quantity):>10.4f} @ {float(t.price):>10.4f} "
+                          f"{t.currency}  {t.traded_at.date()}")
+                skipped.append(pid)
+                continue
+            print(f"  Currency: {pcurrencies.pop()} (consistent)")
+
             print(f"  Current positions:")
             for r in rows:
                 print(f"    {r.ticker:<8} qty={float(r.quantity):>12.4f} "
@@ -196,6 +206,10 @@ async def run(old: str, new: str, apply: bool) -> None:
                         await db.delete(w)
                     else:
                         w.ticker = new
+
+        if skipped:
+            print(f"\n⚠ {len(skipped)} portfolio(s) skipped on a currency clash — "
+                  f"see above. Any other portfolios were still processed.")
 
         if apply:
             await db.commit()
