@@ -1,5 +1,6 @@
 import csv
 import io
+import logging
 import math
 from datetime import date, datetime, timezone
 
@@ -17,6 +18,8 @@ from app.schemas.portfolio import (
     TradeUpdate,
 )
 from app.services.market_data import MarketDataService
+
+log = logging.getLogger(__name__)
 
 
 class PortfolioService:
@@ -140,6 +143,18 @@ class PortfolioService:
         - Fetches the current quote (used as fill price)
         - Validates sufficient cash for buys, sufficient shares for sells
         - Creates a Trade row, updates the Position, updates cash_balance
+
+        Currency handling: the trade is recorded at the instrument's
+        NATIVE price and currency, matching how real trades are stored,
+        while the virtual cash ledger (a single scalar on the portfolio)
+        is debited in the portfolio's currency using a live FX rate.
+
+        This previously stamped every trade with the PORTFOLIO's currency
+        regardless of where the instrument trades, so a EUR-quoted line
+        like MBG.DE recorded a €45 fill as "$45" and debited $45 of
+        virtual cash. Paper P&L on any non-USD instrument was wrong by
+        the FX rate — about 8% for EUR — and it compounded silently
+        across every foreign name a strategy touched.
         """
         if portfolio.broker != BrokerType.paper:
             raise ValueError("Paper trades can only be executed on paper portfolios")
@@ -158,13 +173,57 @@ class PortfolioService:
         if price <= 0 or not math.isfinite(price):
             raise ValueError(f"Invalid quote price for {ticker}: {price}")
 
-        cost = price * quantity
+        # ── Currency resolution ───────────────────────────────────────
+        # Crypto is quoted in USD by CoinGecko. For equities, ask the
+        # provider what the listing actually trades in — MBG.DE is EUR,
+        # 7203.T is JPY, and so on.
+        from app.data.crypto import is_crypto as _is_crypto
+
+        base_ccy = (portfolio.currency or "USD").upper()
+        if _is_crypto(ticker):
+            native_ccy = "USD"
+        else:
+            try:
+                native_ccy = (
+                    (await MarketDataService().get_currency(ticker)).get("currency") or base_ccy
+                ).upper()
+            except Exception as exc:
+                # Degrade to the portfolio currency rather than blocking
+                # the trade. Logged so a systematic lookup failure is
+                # visible instead of quietly reintroducing the old bug.
+                log.warning(
+                    "Paper trade: currency lookup failed for %s (%s) — "
+                    "assuming portfolio currency %s", ticker, exc, base_ccy,
+                )
+                native_ccy = base_ccy
+
+        # FX rate to convert the fill into the cash ledger's currency.
+        fx_rate = 1.0
+        if native_ccy != base_ccy:
+            try:
+                rates = await MarketDataService().get_fx_rates([native_ccy], base=base_ccy)
+                rate = rates.get(native_ccy)
+            except Exception as exc:
+                raise ValueError(
+                    f"Cannot price a {native_ccy} instrument into a {base_ccy} "
+                    f"paper account — FX lookup failed: {exc}"
+                )
+            if not rate or not math.isfinite(rate) or rate <= 0:
+                raise ValueError(
+                    f"Cannot price a {native_ccy} instrument into a {base_ccy} "
+                    f"paper account — no FX rate available for {native_ccy}/{base_ccy}"
+                )
+            fx_rate = float(rate)
+
+        # Trade is recorded natively; cash moves in the portfolio currency.
+        cost = price * quantity * fx_rate
         cash = float(portfolio.cash_balance or 0)
 
         if action == TradeAction.buy:
             if cost > cash:
                 raise ValueError(
-                    f"Insufficient cash: trade requires ${cost:,.2f} but only ${cash:,.2f} available"
+                    f"Insufficient cash: trade requires {cost:,.2f} {base_ccy} "
+                    f"but only {cash:,.2f} {base_ccy} available"
                 )
             new_cash = cash - cost
         else:  # sell
@@ -184,8 +243,7 @@ class PortfolioService:
             new_cash = cash + cost
 
         # Detect asset type — crypto vs stock
-        from app.data.crypto import is_crypto
-        asset_type = AssetType.crypto if is_crypto(ticker) else AssetType.stock
+        asset_type = AssetType.crypto if _is_crypto(ticker) else AssetType.stock
 
         # Create the Trade row (immutable ledger)
         trade = Trade(
@@ -196,9 +254,12 @@ class PortfolioService:
             quantity=Decimal(str(quantity)),
             price=Decimal(str(price)),
             fees=Decimal("0"),
-            currency="USD" if asset_type == AssetType.crypto else (portfolio.currency or "USD"),
+            currency=native_ccy,
             traded_at=datetime.now(timezone.utc),
-            notes="Paper trade",
+            notes=(
+                "Paper trade" if fx_rate == 1.0
+                else f"Paper trade (FX {native_ccy}/{base_ccy} @ {fx_rate:.4f})"
+            ),
         )
         self.db.add(trade)
         await self.db.flush()
