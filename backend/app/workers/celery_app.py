@@ -17,6 +17,7 @@ celery_app = Celery(
         "app.workers.tasks.eightk_fetch",
         "app.workers.tasks.dividend_sync",
         "app.workers.tasks.ticker_health",
+        "app.workers.tasks.magic_formula",
         "app.workers.tasks.heatmap_warm",
         "app.workers.tasks.signal_outcome",
         "app.workers.tasks.calendar_refresh",
@@ -102,6 +103,14 @@ celery_app.conf.beat_schedule = {
     "check-ticker-health": {
         "task": "app.workers.tasks.ticker_health.check_ticker_health",
         "schedule": crontab(hour=4, minute=30),
+    },
+    # Recompute the Magic Formula screen weekly (Sunday 02:00 UTC, well
+    # clear of the weekday jobs). Slow by nature — three yfinance calls
+    # per ticker across ~500 names — but the inputs are annual-report
+    # figures, so weekly is already more often than they change.
+    "refresh-magic-formula": {
+        "task": "app.workers.tasks.magic_formula.refresh_magic_formula",
+        "schedule": crontab(hour=2, minute=0, day_of_week=0),
     },
     # Pre-warm the S&P 500 heatmap cache every 10 min so dashboard/heatmap
     # never wait for the ~450 yfinance fetch. Task self-skips on weekends/holidays.

@@ -137,6 +137,33 @@ export const marketApi = {
     api.get<{ unresolvable: UnresolvableTicker[] }>("/market/ticker-health"),
 };
 
+export interface MagicFormulaRow {
+  ticker: string;
+  company_name: string | null;
+  sector: string | null;
+  roce: number | null;
+  earnings_yield: number | null;
+  ev_ebit: number | null;
+  rank_roce: number | null;
+  rank_yield: number | null;
+  combined_rank: number | null;
+  in_sp500: boolean;
+}
+
+export interface MagicFormulaScreen {
+  computed_at: string | null;
+  universe: number;
+  ranked: number;
+  exclusions: { reason: string; count: number }[];
+  results: MagicFormulaRow[];
+}
+
+export const screenerApi = {
+  magicFormula: (limit = 30) =>
+    api.get<MagicFormulaScreen>("/screener/magic-formula", { params: { limit } }),
+  refreshMagicFormula: () => api.post("/screener/magic-formula/refresh"),
+};
+
 export interface UnresolvableTicker {
   ticker: string;
   consecutive_failures: number;

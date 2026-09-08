@@ -5,6 +5,7 @@ from app.models.conversation import ChatMessage, Conversation
 from app.models.dividend import Dividend
 from app.models.halal_compliance import HalalCompliance
 from app.models.insider_trade import InsiderTrade
+from app.models.magic_formula import MagicFormulaRank
 from app.models.market_regime import MarketRegime
 from app.models.market_snapshot import MarketSnapshot
 from app.models.news import NewsItem
@@ -45,4 +46,5 @@ __all__ = [
     "SystemSetting",
     "Dividend",
     "TickerHealth",
+    "MagicFormulaRank",
 ]

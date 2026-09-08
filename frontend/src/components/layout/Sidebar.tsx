@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
+  Filter,
   Briefcase,
   TrendingUp,
   Bell,
@@ -31,6 +32,7 @@ const NAV = [
   { href: "/strategies", label: "Strategies", icon: Cpu },
   { href: "/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/heatmap", label: "Heatmap", icon: LayoutGrid },
+  { href: "/screener", label: "Screener", icon: Filter },
   { href: "/alerts", label: "Alerts", icon: Bell },
   { href: "/advisor", label: "AI Advisor", icon: MessageSquare },
 ];

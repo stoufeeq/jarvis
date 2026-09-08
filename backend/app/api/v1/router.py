@@ -10,6 +10,7 @@ from app.api.v1 import (
     halal,
     market,
     portfolio,
+    screener,
     settings,
     signals,
     strategies,
@@ -33,3 +34,4 @@ api_router.include_router(calendar.router)
 api_router.include_router(strategies.router)
 api_router.include_router(halal.router)
 api_router.include_router(settings.router)
+api_router.include_router(screener.router)

@@ -95,6 +95,7 @@ PROTECTED_ROUTES = [
     ("GET", "/api/v1/briefing/today"),
     ("GET", "/api/v1/market/quote/AAPL"),
     ("GET", "/api/v1/market/ticker-health"),
+    ("GET", "/api/v1/screener/magic-formula"),
     ("GET", "/api/v1/portfolios/1/dividends"),
     ("GET", "/api/v1/settings/models"),
     ("GET", "/api/v1/settings/models/catalog"),
