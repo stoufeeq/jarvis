@@ -2,39 +2,18 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  LayoutDashboard,
-  Briefcase,
-  BookOpen,
-  TrendingUp,
-  Bell,
-  Wallet,
-  LayoutGrid,
-  Newspaper,
-  CalendarDays,
-  Cpu,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
 
-const NAV = [
-  { href: "/dashboard", label: "Home", icon: LayoutDashboard },
-  { href: "/briefing", label: "Briefing", icon: Newspaper },
-  { href: "/portfolio", label: "Portfolio", icon: Briefcase },
-  { href: "/accounts", label: "Accounts", icon: Wallet },
-  { href: "/watchlist", label: "Watchlist", icon: BookOpen },
-  { href: "/signals", label: "Signals", icon: TrendingUp },
-  { href: "/strategies", label: "Auto", icon: Cpu },
-  { href: "/calendar", label: "Calendar", icon: CalendarDays },
-  { href: "/heatmap", label: "Heatmap", icon: LayoutGrid },
-  { href: "/alerts", label: "Alerts", icon: Bell },
-];
+import { cn } from "@/lib/utils";
+import { MOBILE_NAV_ITEMS } from "./nav";
+
+
 
 export function BottomNav() {
   const pathname = usePathname();
 
   return (
     <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 flex border-t border-border bg-card overflow-x-auto" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-      {NAV.map(({ href, label, icon: Icon }) => {
+      {MOBILE_NAV_ITEMS.map(({ href, label, shortLabel, icon: Icon }) => {
         const active = pathname.startsWith(href);
         return (
           <Link
@@ -46,7 +25,7 @@ export function BottomNav() {
             )}
           >
             <Icon className={cn("w-4 h-4", active ? "text-primary" : "text-muted-foreground")} />
-            {label}
+            {shortLabel ?? label}
           </Link>
         );
       })}

@@ -3,39 +3,13 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  LayoutDashboard,
-  Filter,
-  Briefcase,
-  TrendingUp,
-  Bell,
-  BookOpen,
-  MessageSquare,
-  LogOut,
-  Wallet,
-  LayoutGrid,
-  Newspaper,
-  CalendarDays,
-  Cpu,
-} from "lucide-react";
+import { LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { NAV_ITEMS } from "./nav";
 import { useAuthStore } from "@/store/auth";
 import { useQueryClient } from "@tanstack/react-query";
 
-const NAV = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/briefing", label: "Briefing", icon: Newspaper },
-  { href: "/portfolio", label: "Portfolio", icon: Briefcase },
-  { href: "/accounts", label: "Accounts", icon: Wallet },
-  { href: "/watchlist", label: "Watchlist", icon: BookOpen },
-  { href: "/signals", label: "Signals", icon: TrendingUp },
-  { href: "/strategies", label: "Strategies", icon: Cpu },
-  { href: "/calendar", label: "Calendar", icon: CalendarDays },
-  { href: "/heatmap", label: "Heatmap", icon: LayoutGrid },
-  { href: "/screener", label: "Screener", icon: Filter },
-  { href: "/alerts", label: "Alerts", icon: Bell },
-  { href: "/advisor", label: "AI Advisor", icon: MessageSquare },
-];
+
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -61,7 +35,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 px-3 py-4 space-y-1">
-        {NAV.map(({ href, label, icon: Icon }) => (
+        {NAV_ITEMS.map(({ href, label, icon: Icon }) => (
           <Link
             key={href}
             href={href}
