@@ -78,6 +78,9 @@ export function UnresolvableTickersBanner() {
         </code>{" "}
         (dry-run first; add <code className="bg-black/20 px-1 rounded">--apply</code> to commit).
         It rebuilds the position from your trade ledger, which a plain rename cannot do.
+        If the symbol changed because of a merger or reverse split, add{" "}
+        <code className="bg-black/20 px-1 rounded">--split OLD:NEW@YYYY-MM-DD</code> so
+        pre-split trades are rescaled to match the new quotes.
       </p>
     </div>
   );
