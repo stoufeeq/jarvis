@@ -18,6 +18,7 @@ from app.schemas.portfolio import (
     TradeRead,
     TradeUpdate,
 )
+from app.services.allocation import AllocationService
 from app.services.portfolio import PortfolioService
 
 router = APIRouter(prefix="/portfolios", tags=["portfolio"])
@@ -65,6 +66,41 @@ async def create_portfolio(
         return await PortfolioService(db).create(user.id, payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+# Declared before every "/{portfolio_id}" route: FastAPI matches in
+# definition order, and a literal path that sits after an int path param
+# would be coerced and 422 instead of being reached.
+@router.get("/allocation")
+async def get_allocation(
+    portfolio_id: int | None = Query(
+        None, description="One portfolio; omit to aggregate across all of them"
+    ),
+    include_paper: bool = Query(
+        False, description="Include system-managed paper portfolios"
+    ),
+    base_currency: str = Query("USD", min_length=3, max_length=3),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Holdings distribution across sectors, asset types and single names.
+
+    Aggregated across the user's active non-paper portfolios by default,
+    because sector exposure is a whole-book question — one portfolio at a
+    time hides it. Values are current market value in `base_currency`;
+    see AllocationService for why cost basis is not used.
+    """
+    if portfolio_id is not None:
+        p = await PortfolioService(db).get(portfolio_id)
+        if not p:
+            raise NotFoundError("Portfolio not found")
+        _assert_owner(p, user)
+    return await AllocationService(db).compute(
+        user_id=user.id,
+        portfolio_id=portfolio_id,
+        include_paper=include_paper,
+        base_ccy=base_currency,
+    )
 
 
 @router.post("/{portfolio_id}/paper-trade", response_model=TradeRead, status_code=201)

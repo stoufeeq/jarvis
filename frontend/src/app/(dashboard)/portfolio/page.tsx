@@ -9,6 +9,7 @@ import { CurrencySwitcher } from "@/components/ui/CurrencySwitcher";
 import { PrivacyToggle } from "@/components/ui/PrivacyToggle";
 import { InlineChart } from "@/components/charts/InlineChart";
 import { PortfolioPerformanceChart } from "@/components/charts/PortfolioPerformanceChart";
+import { AllocationTab } from "@/components/portfolio/AllocationTab";
 import { RiskTab } from "@/components/portfolio/RiskTab";
 import { DividendsTab } from "@/components/portfolio/DividendsTab";
 import { UnresolvableTickersBanner } from "@/components/ui/UnresolvableTickersBanner";
@@ -71,7 +72,7 @@ export default function PortfolioPage() {
   // Empty array = save as null (no restriction). Non-empty = save as CSV.
   const [editAllowedAccountIds, setEditAllowedAccountIds] = useState<number[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<"positions" | "trades" | "dividends" | "risk">("positions");
+  const [activeTab, setActiveTab] = useState<"positions" | "trades" | "dividends" | "allocation" | "risk">("positions");
   const [expandedTicker, setExpandedTicker] = useState<string | null>(null);
 
   // Sort state for positions
@@ -958,7 +959,7 @@ export default function PortfolioPage() {
 
           {/* Positions / Trades / Risk tabs */}
           <div className="flex gap-1 border-b border-border">
-            {(["positions", "trades", "dividends", "risk"] as const).map((tab) => (
+            {(["positions", "trades", "dividends", "allocation", "risk"] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -1148,6 +1149,17 @@ export default function PortfolioPage() {
             <DividendsTab
               portfolioId={selectedId}
               currency={summary?.currency ?? "USD"}
+            />
+          )}
+
+          {/* Allocation tab — sector / asset-type / single-name distribution.
+              Kept out of the Risk tab on purpose: this is answerable from
+              cached positions and renders instantly, while Risk fetches 90
+              days of history for every holding. */}
+          {activeTab === "allocation" && selectedId && (
+            <AllocationTab
+              portfolioId={selectedId}
+              portfolioName={portfolios.find((p) => p.id === selectedId)?.name}
             />
           )}
 

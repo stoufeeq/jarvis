@@ -85,6 +85,11 @@ export const portfolioApi = {
   performance: (id: number, period: string = "6mo") =>
     api.get(`/portfolios/${id}/performance`, { params: { period } }),
   risk: (id: number) => api.get(`/portfolios/${id}/risk`),
+  // Cross-portfolio by default: omit portfolio_id to aggregate every
+  // active non-paper portfolio, which is the only way sector exposure
+  // reads correctly.
+  allocation: (params: { portfolio_id?: number; include_paper?: boolean } = {}) =>
+    api.get("/portfolios/allocation", { params }),
   dividends: (id: number, daysAhead = 60) =>
     api.get<DividendIncome>(`/portfolios/${id}/dividends`, { params: { days_ahead: daysAhead } }),
   syncDividends: (id: number) => api.post(`/portfolios/${id}/dividends/sync`),

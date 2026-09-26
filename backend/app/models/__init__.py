@@ -16,6 +16,7 @@ from app.models.signal_outcome import SignalOutcome
 from app.models.strategy import Strategy, StrategyTrade
 from app.models.system_setting import SystemSetting
 from app.models.ticker_health import TickerHealth
+from app.models.ticker_profile import TickerProfile
 from app.models.user import User
 from app.models.watchlist import Watchlist, WatchlistItem
 
@@ -47,4 +48,5 @@ __all__ = [
     "Dividend",
     "TickerHealth",
     "MagicFormulaRank",
+    "TickerProfile",
 ]
