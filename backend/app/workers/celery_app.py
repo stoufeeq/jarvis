@@ -17,6 +17,7 @@ celery_app = Celery(
         "app.workers.tasks.eightk_fetch",
         "app.workers.tasks.dividend_sync",
         "app.workers.tasks.ticker_health",
+        "app.workers.tasks.halal_refresh",
         "app.workers.tasks.magic_formula",
         "app.workers.tasks.heatmap_warm",
         "app.workers.tasks.signal_outcome",
@@ -103,6 +104,15 @@ celery_app.conf.beat_schedule = {
     "check-ticker-health": {
         "task": "app.workers.tasks.ticker_health.check_ticker_health",
         "schedule": crontab(hour=4, minute=30),
+    },
+    # Re-screen Sharia compliance on the 1st of each month at 03:30 UTC
+    # (between the 03:00 calendar refresh and the 04:30 ticker health
+    # probe). Monthly matches how often the balance-sheet inputs change,
+    # and the service TTL is set longer than this interval so this job —
+    # not a user's page load — is what renews a verdict.
+    "refresh-halal-compliance": {
+        "task": "app.workers.tasks.halal_refresh.refresh_halal_compliance",
+        "schedule": crontab(hour=3, minute=30, day_of_month=1),
     },
     # Recompute the Magic Formula screen weekly (Sunday 02:00 UTC, well
     # clear of the weekday jobs). Slow by nature — three yfinance calls

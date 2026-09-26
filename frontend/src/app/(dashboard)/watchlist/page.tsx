@@ -90,7 +90,7 @@ export default function WatchlistPage() {
 
   // "Halal only" filter — hides explicitly non-compliant; keeps compliant + unknown.
   const items: WatchlistItem[] = halalOnlyFilter
-    ? allItems.filter((i) => halalByTicker[i.ticker]?.status !== "non_compliant")
+    ? allItems.filter((i) => halalByTicker[i.ticker.toUpperCase()]?.status !== "non_compliant")
     : allItems;
   const tickers = items.map((i) => i.ticker);
 
@@ -330,7 +330,7 @@ export default function WatchlistPage() {
                             </span>
                           </button>
                           <TickerLink ticker={ticker} />
-                          <HalalBadge compliance={halalByTicker[ticker]} />
+                          <HalalBadge compliance={halalByTicker[ticker.toUpperCase()]} />
                           {!isCrypto(ticker) && (
                             <MomentumBadge score={momentumScores[ticker.toUpperCase()]} />
                           )}

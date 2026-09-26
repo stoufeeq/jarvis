@@ -188,7 +188,7 @@ export default function ScreenerPage() {
                     <td className="px-3 py-2 font-semibold">
                       <div className="flex items-center gap-1.5">
                         <TickerLink ticker={r.ticker} />
-                        <HalalBadge compliance={halalByTicker[r.ticker]} />
+                        <HalalBadge compliance={halalByTicker[r.ticker.toUpperCase()]} />
                         {!r.in_sp500 && (
                           <span
                             className="text-[9px] uppercase tracking-wider px-1 py-0.5 rounded bg-blue-500/15 text-blue-400"

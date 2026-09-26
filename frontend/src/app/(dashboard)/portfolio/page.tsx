@@ -1018,7 +1018,7 @@ export default function PortfolioPage() {
                                 </span>
                               </button>
                               <TickerLink ticker={pos.ticker} />
-                              <HalalBadge compliance={halalByTicker[pos.ticker]} />
+                              <HalalBadge compliance={halalByTicker[pos.ticker.toUpperCase()]} />
                               {!isCrypto(pos.ticker) && (
                                 <MomentumBadge score={momentumScores[pos.ticker.toUpperCase()]} />
                               )}

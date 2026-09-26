@@ -12,8 +12,19 @@ Verdict flow per ticker:
                 cash + ST investments / market_cap < 33%
   3. Any other quote type (crypto, currency, …) → unknown.
 
-Look-aside cache in halal_compliance table; 24h TTL. yfinance fetches
-run in thread pool so concurrent screening doesn't block the event loop.
+Look-aside cache in the halal_compliance table. The TTL is deliberately
+longer than the monthly refresh job's period, so the scheduled task is
+what renews a verdict and a page load never pays for a yfinance fetch
+of a ticker that has been screened before. Pass force=True (or run the
+Celery task) to refresh regardless of age.
+
+yfinance fetches run in a thread pool so concurrent screening doesn't
+block the event loop. Those fetches are the ONLY concurrent part:
+verdicts are computed in parallel but persisted sequentially on one
+session. Committing from inside asyncio.gather raises
+IllegalStateChangeError — SQLAlchemy's AsyncSession is not safe for
+concurrent use — which used to 500 the batch endpoint on any cold cache
+and, because the badge renders nothing without data, failed invisibly.
 """
 
 from __future__ import annotations
@@ -34,7 +45,11 @@ from app.models.halal_compliance import HalalCompliance, HalalStatus
 
 log = logging.getLogger(__name__)
 
-CACHE_TTL = timedelta(hours=24)
+# Longer than the monthly refresh interval (see the halal_refresh Celery
+# task) so a cached verdict is renewed by that job rather than lazily on
+# a user's page load. The inputs are balance-sheet figures that move
+# quarterly at most.
+CACHE_TTL = timedelta(days=35)
 DEBT_RATIO_MAX = 0.33      # AAOIFI 33% threshold
 CASH_RATIO_MAX = 0.33
 
@@ -89,60 +104,96 @@ class HalalScreenerService:
 
     # ── Public API ─────────────────────────────────────────────────────────
 
-    async def screen(self, ticker: str) -> HalalCompliance:
+    async def screen(self, ticker: str, force: bool = False) -> HalalCompliance:
         """Return cached verdict if fresh; otherwise recompute, persist, return."""
         ticker = ticker.upper()
         row = await self.db.get(HalalCompliance, ticker)
-        if row and self._is_fresh(row):
+        if row and not force and self._is_fresh(row):
             return row
-        return await self._compute_and_store(ticker, existing=row)
+        verdict = await self._compute(ticker)
+        row = self._persist(ticker, verdict, existing=row)
+        await self.db.commit()
+        return row
 
-    async def screen_many(self, tickers: list[str]) -> list[HalalCompliance]:
-        """Batch — concurrent yfinance fetches when cache misses."""
-        tickers = [t.upper() for t in tickers]
-        if not tickers:
+    async def screen_many(
+        self, tickers: list[str], force: bool = False
+    ) -> list[HalalCompliance]:
+        """Batch screen. Provider fetches run concurrently; DB writes do not.
+
+        Deduplicates the input — a portfolio and a watchlist commonly
+        overlap, and screening the same symbol twice in one batch would
+        both waste a provider call and race two writes to one primary key.
+        """
+        wanted = [t.upper() for t in tickers]
+        unique = list(dict.fromkeys(wanted))
+        if not unique:
             return []
 
         result = await self.db.execute(
-            select(HalalCompliance).where(HalalCompliance.ticker.in_(tickers))
+            select(HalalCompliance).where(HalalCompliance.ticker.in_(unique))
         )
         cached = {r.ticker: r for r in result.scalars().all()}
 
-        out: list[HalalCompliance] = []
-        misses: list[tuple[str, HalalCompliance | None]] = []
-        for t in tickers:
+        out: dict[str, HalalCompliance] = {}
+        misses: list[str] = []
+        for t in unique:
             row = cached.get(t)
-            if row and self._is_fresh(row):
-                out.append(row)
+            if row is not None and not force and self._is_fresh(row):
+                out[t] = row
             else:
-                misses.append((t, row))
+                misses.append(t)
 
         if misses:
-            # Limit concurrency — yfinance throttles aggressively above ~10 parallel.
+            # Limit concurrency — yfinance throttles aggressively above ~10
+            # parallel. Nothing in here touches the DB session.
             sem = asyncio.Semaphore(8)
 
-            async def one(t: str, existing: HalalCompliance | None) -> HalalCompliance:
+            async def one(t: str) -> tuple[str, dict[str, Any]]:
                 async with sem:
-                    return await self._compute_and_store(t, existing=existing)
+                    return t, await self._compute(t)
 
-            fresh = await asyncio.gather(*[one(t, e) for t, e in misses])
-            out.extend(fresh)
+            verdicts = await asyncio.gather(*[one(t) for t in misses])
 
-        # Preserve input ticker order
-        by_t = {r.ticker: r for r in out}
-        return [by_t[t] for t in tickers if t in by_t]
+            # Persist sequentially on the single session, then commit once.
+            for t, verdict in verdicts:
+                out[t] = self._persist(t, verdict, existing=cached.get(t))
+            await self.db.commit()
+
+        # Preserve input order; a ticker requested twice is returned once.
+        return [out[t] for t in unique if t in out]
+
+    async def refresh_all(self, tickers: list[str]) -> dict[str, int]:
+        """Re-screen every given ticker ignoring the cache. Used by the
+        monthly Celery task; returns a verdict tally for the log."""
+        rows = await self.screen_many(tickers, force=True)
+        tally: dict[str, int] = {"screened": len(rows)}
+        for r in rows:
+            key = r.status.value if hasattr(r.status, "value") else str(r.status)
+            tally[key] = tally.get(key, 0) + 1
+        return tally
 
     # ── Compute path ───────────────────────────────────────────────────────
 
     @staticmethod
     def _is_fresh(row: HalalCompliance) -> bool:
-        age = datetime.now(UTC) - row.computed_at
-        return age < CACHE_TTL
+        computed = row.computed_at
+        if computed is None:
+            return False
+        # The column is DateTime(timezone=True), so Postgres hands back an
+        # aware value — but SQLite (tests) and any row written by a path
+        # that lost the tzinfo hand back a naive one, and subtracting
+        # those raises TypeError. A crash here would look exactly like the
+        # bug this file guards against: no verdict, no badge, no message.
+        if computed.tzinfo is None:
+            computed = computed.replace(tzinfo=UTC)
+        return datetime.now(UTC) - computed < CACHE_TTL
 
-    async def _compute_and_store(
-        self, ticker: str, existing: HalalCompliance | None
+    def _persist(
+        self, ticker: str, verdict: dict[str, Any], existing: HalalCompliance | None
     ) -> HalalCompliance:
-        verdict = await self._compute(ticker)
+        """Write the verdict to the cache row. Deliberately synchronous and
+        commit-free: the caller decides the transaction boundary, which is
+        what keeps batch screening off concurrent commits."""
         now = datetime.now(UTC)
 
         if existing is None:
@@ -169,8 +220,6 @@ class HalalScreenerService:
             row.cash_pct = verdict.get("cash_pct")
             row.computed_at = now
 
-        await self.db.commit()
-        await self.db.refresh(row)
         return row
 
     async def _compute(self, ticker: str) -> dict[str, Any]:
