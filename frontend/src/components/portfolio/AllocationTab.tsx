@@ -173,6 +173,107 @@ function SectionTitle({ children, note }: { children: React.ReactNode; note?: st
   );
 }
 
+/**
+ * Donut for a small part-to-whole split.
+ *
+ * Used for asset type and nothing else. A donut is only honest when the
+ * reader's job is "see that these are parts of one whole" across a few
+ * segments — it is actively bad at comparing close values, because arc
+ * length at different angles is far harder to judge than bar length.
+ * Sector allocation fails both tests: it runs to eleven categories, its
+ * middle entries sit within a point or two of each other, and there is
+ * nowhere on an arc to put the S&P 500 reference tick that makes the
+ * sector view worth reading. Asset type is three or four segments with no
+ * benchmark, which is exactly the case a donut serves.
+ *
+ * Same single-hue sequential ramp as the bars, a 2px surface gap between
+ * segments, and every segment direct-labelled — nothing here depends on
+ * telling two shades apart.
+ */
+function Donut({
+  groups, currency, total,
+}: {
+  groups: Group[];
+  currency: string;
+  total: number;
+}) {
+  const R = 52;
+  const STROKE = 16;
+  const C = 2 * Math.PI * R;
+  // Surface-coloured gap between adjacent fills, in path units. Skipped
+  // when a single segment owns the whole ring — a gap there would render
+  // as a stray notch in a solid circle.
+  const GAP = groups.length > 1 ? 3 : 0;
+
+  let offset = 0;
+  const arcs = groups.map((g, i) => {
+    const len = Math.max((g.pct / 100) * C - GAP, 0.5);
+    const arc = { g, i, len, offset };
+    offset += (g.pct / 100) * C;
+    return arc;
+  });
+
+  return (
+    <div className="flex flex-col sm:flex-row items-center gap-5">
+      <div className="relative shrink-0">
+        <svg width="140" height="140" viewBox="0 0 140 140" role="img"
+             aria-label="Allocation by asset type">
+          <circle cx="70" cy="70" r={R} fill="none"
+                  stroke="hsl(var(--secondary) / 0.6)" strokeWidth={STROKE} />
+          {arcs.map(({ g, i, len, offset: o }) => (
+            <circle
+              key={g.name}
+              cx="70" cy="70" r={R} fill="none"
+              stroke={`rgb(${HUE} / ${rampOpacity(i)})`}
+              strokeWidth={STROKE}
+              strokeDasharray={`${len} ${C - len}`}
+              strokeDashoffset={-o}
+              transform="rotate(-90 70 70)"
+            >
+              <title>{`${g.name} — ${g.pct.toFixed(1)}%`}</title>
+            </circle>
+          ))}
+        </svg>
+        {/* Centre carries the total, the thing the ring is a whole OF. */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Total
+          </span>
+          <span className="text-sm font-semibold tabular-nums">
+            {formatCurrency(total, currency)}
+          </span>
+        </div>
+      </div>
+
+      {/* Legend — always present, and it carries the numbers so identity
+          never rests on shade alone. */}
+      <ul className="w-full space-y-2">
+        {groups.map((g, i) => (
+          <li key={g.name} className="flex items-baseline gap-2 text-sm">
+            <span
+              className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-sm"
+              style={{ backgroundColor: `rgb(${HUE} / ${rampOpacity(i)})` }}
+              aria-hidden
+            />
+            <span className="flex-1 truncate">
+              {g.name.charAt(0).toUpperCase() + g.name.slice(1)}
+              <span className="ml-1.5 text-[11px] text-muted-foreground">
+                {g.count} name{g.count === 1 ? "" : "s"}
+              </span>
+            </span>
+            <span className="tabular-nums shrink-0">
+              {g.pct.toFixed(1)}%
+              <span className="ml-2 text-xs text-muted-foreground">
+                {formatCurrency(g.value, currency)}
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 interface Props {
   portfolioId: number;
   portfolioName?: string;
@@ -228,7 +329,7 @@ export function AllocationTab({ portfolioId, portfolioName }: Props) {
     <div className="space-y-4">
       {/* Filters in one row above the charts */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="inline-flex rounded-lg border border-border overflow-hidden text-xs">
+        <div className="inline-flex max-w-full rounded-lg border border-border overflow-hidden text-xs">
           {([
             ["all", "All real portfolios"],
             ["one", portfolioName ? `Just ${portfolioName}` : "This portfolio"],
@@ -237,11 +338,12 @@ export function AllocationTab({ portfolioId, portfolioName }: Props) {
               key={key}
               onClick={() => setScope(key)}
               className={
-                "px-3 py-1.5 transition-colors " +
+                "min-w-0 truncate px-3 py-1.5 transition-colors " +
                 (scope === key
                   ? "bg-secondary text-foreground"
                   : "text-muted-foreground hover:text-foreground")
               }
+              title={label}
             >
               {label}
             </button>
@@ -331,20 +433,11 @@ export function AllocationTab({ portfolioId, portfolioName }: Props) {
           {data.by_asset_type.length > 0 && (
             <div className="rounded-xl border border-border bg-card p-4">
               <SectionTitle>By asset type</SectionTitle>
-              <div className="space-y-3">
-                {data.by_asset_type.map((g, i) => (
-                  <BarRow
-                    key={g.name}
-                    label={g.name.charAt(0).toUpperCase() + g.name.slice(1)}
-                    pct={g.pct}
-                    value={g.value}
-                    currency={data.base_currency}
-                    index={i}
-                    sublabel={`${g.count} name${g.count === 1 ? "" : "s"}`}
-                    tooltip={g.tickers.join(", ")}
-                  />
-                ))}
-              </div>
+              <Donut
+                groups={data.by_asset_type}
+                currency={data.base_currency}
+                total={data.total_value}
+              />
             </div>
           )}
 

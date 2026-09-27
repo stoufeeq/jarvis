@@ -957,16 +957,26 @@ export default function PortfolioPage() {
             </div>
           )}
 
-          {/* Positions / Trades / Risk tabs */}
-          <div className="flex gap-1 border-b border-border">
+          {/* Positions / Trades / Dividends / Allocation / Risk tabs.
+              Segmented control rather than an underline row: five
+              px-4 buttons in a plain flex measured ~460px, which
+              overflowed a 375px phone and scrolled the whole page
+              sideways. A grid can never exceed its container, and the
+              filled active pill reads harder than a 2px underline did.
+
+              Three columns on mobile, wrapping to two rows: five across
+              leaves ~65px per cell at 375px, and "allocation" needs ~70px
+              even at 11px, so it would truncate. Three gives ~110px and
+              keeps the labels full-size and unabbreviated. */}
+          <div className="grid grid-cols-3 gap-1 rounded-lg border border-border bg-secondary/30 p-1 sm:inline-grid sm:auto-cols-max sm:grid-flow-col sm:grid-cols-none sm:gap-0.5">
             {(["positions", "trades", "dividends", "allocation", "risk"] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`px-4 py-2 text-sm font-medium capitalize border-b-2 transition-colors ${
+                className={`min-w-0 truncate rounded-md px-2 py-2 text-xs font-semibold capitalize transition-colors sm:px-5 sm:text-sm ${
                   activeTab === tab
-                    ? "border-primary text-foreground"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
+                    ? "bg-card text-foreground shadow-sm ring-1 ring-border"
+                    : "text-muted-foreground hover:bg-card/40 hover:text-foreground"
                 }`}
               >
                 {tab}
