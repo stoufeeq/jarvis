@@ -964,22 +964,30 @@ export default function PortfolioPage() {
               sideways. A grid can never exceed its container, and the
               filled active pill reads harder than a 2px underline did.
 
-              Three columns on mobile, wrapping to two rows: five across
-              leaves ~65px per cell at 375px, and "allocation" needs ~70px
-              even at 11px, so it would truncate. Three gives ~110px and
-              keeps the labels full-size and unabbreviated. */}
-          <div className="grid grid-cols-3 gap-1 rounded-lg border border-border bg-secondary/30 p-1 sm:inline-grid sm:auto-cols-max sm:grid-flow-col sm:grid-cols-none sm:gap-0.5">
-            {(["positions", "trades", "dividends", "allocation", "risk"] as const).map((tab) => (
+              One row of five at every width. At 375px that is ~66px per
+              cell, which fits every label at 11px except "Allocation"
+              (~60px of 62px usable) — so that one alone gets a short
+              form on mobile, the same shortLabel idiom the nav uses for
+              Dashboard→Home and Strategies→Auto. */}
+          <div className="grid grid-cols-5 gap-px rounded-lg border border-border bg-secondary/30 p-1 sm:inline-grid sm:auto-cols-max sm:grid-flow-col sm:grid-cols-none sm:gap-0.5">
+            {([
+              ["positions", "Positions"],
+              ["trades", "Trades"],
+              ["dividends", "Dividends"],
+              ["allocation", "Mix"],
+              ["risk", "Risk"],
+            ] as const).map(([tab, short]) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`min-w-0 truncate rounded-md px-2 py-2 text-xs font-semibold capitalize transition-colors sm:px-5 sm:text-sm ${
+                className={`min-w-0 truncate rounded-md px-0.5 py-2 text-[11px] font-semibold capitalize tracking-tight transition-colors sm:px-5 sm:text-sm sm:tracking-normal ${
                   activeTab === tab
                     ? "bg-card text-foreground shadow-sm ring-1 ring-border"
                     : "text-muted-foreground hover:bg-card/40 hover:text-foreground"
                 }`}
               >
-                {tab}
+                <span className="sm:hidden">{short}</span>
+                <span className="hidden sm:inline">{tab}</span>
               </button>
             ))}
           </div>
