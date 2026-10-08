@@ -60,15 +60,28 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.market_data.refresh_all_positions",
         "schedule": 300,  # every 5 minutes
     },
-    # Refresh P/E ratio and RSI14 for watchlist items once per hour
+    # Refresh P/E ratio and RSI14 for watchlist items every 4 hours.
+    # P/E moves with price but is a fundamentals-flavoured figure nobody
+    # reads to four decimal places, and RSI14 is computed from daily
+    # bars, so hourly was spending 40 requests/hour to recompute values
+    # that change once a day.
     "refresh-pe-rsi": {
         "task": "app.workers.tasks.market_data.refresh_pe_rsi",
-        "schedule": 3600,  # every hour
+        "schedule": 4 * 3600,
     },
-    # Run technical signal scan across all watchlist tickers every 15 min
+    # Technical signal scan across all watchlist tickers, hourly.
+    #
+    # Was every 15 minutes, which cost one 2-year history request per
+    # ticker per run — 160 requests/hour on a 40-name watchlist, the
+    # largest remaining line in the Yahoo budget (scripts/yahoo_budget.py).
+    # The frequency bought nothing: every technical provider reads DAILY
+    # bars (SMA50/200 crosses, RSI, Bollinger, volume vs 20-day average)
+    # and signals expire in 5 days, so four scans an hour recompute the
+    # same numbers from the same unchanged bars. The most time-sensitive
+    # provider is options flow, which expires in 1 day.
     "scan-signals": {
         "task": "app.workers.tasks.signal_scan.scan_all_watchlist_tickers",
-        "schedule": 900,  # every 15 minutes
+        "schedule": 3600,  # hourly
     },
     # Fetch SEC Form 4 insider trades once daily at 6am UTC
     "fetch-insider-trades": {

@@ -14,6 +14,8 @@ import yfinance as yf
 
 from app.config import get_settings
 from app.data.crypto import is_crypto
+from app.services import yahoo_quotes
+from app.services.rate_limit import spend
 from app.services.crypto_market_data import (
     CryptoMarketDataService,
     filter_crypto,
@@ -24,8 +26,19 @@ settings = get_settings()
 
 # Simple in-process quote cache — avoids hammering Yahoo Finance on every watchlist reload.
 # Keys: ticker (str).  Values: (timestamp_float, quote_dict).
+import logging
+
+log = logging.getLogger(__name__)
+
 _QUOTE_CACHE: dict[str, tuple[float, dict]] = {}
 _QUOTE_TTL = 60  # seconds
+
+# How many symbols the batch endpoint may miss before we stop retrying
+# them individually. A few misses are normal (a genuinely bad symbol, a
+# listing Yahoo has no quote for). Many misses mean the provider is
+# refusing, and fanning out 90 single requests in response is how a
+# throttle becomes a longer throttle.
+MAX_SINGLE_QUOTE_FALLBACKS = 5
 
 # FX rate cache — longer TTL since rates don't move second-to-second.
 # Keys: "FROM/TO" (str).  Values: (timestamp_float, rate_float).
@@ -39,6 +52,9 @@ class MarketDataService:
         return await loop.run_in_executor(None, partial(func, *args, **kwargs))
 
     async def get_quote(self, ticker: str) -> dict:
+        """Single quote. Costs three provider requests (5-day history plus
+        fast_info), so prefer get_quotes for anything plural — see the
+        note there."""
         # Route crypto tickers (BTC, ETH, etc.) to CoinGecko
         if is_crypto(ticker):
             quote = await CryptoMarketDataService.get_quote(ticker)
@@ -118,29 +134,96 @@ class MarketDataService:
         return result
 
     async def get_quotes(self, tickers: list[str]) -> list[dict]:
-        # Split crypto from equity tickers — crypto is fetched in a single
-        # batched CoinGecko call, equities are fetched in parallel via yfinance.
+        """Quotes for many tickers in as few provider requests as possible.
+
+        Equities go through Yahoo's batched quote endpoint: one request
+        per 100 symbols, so a 90-ticker refresh costs 1 request instead
+        of 270. It used to fan out to get_quote per ticker, and each of
+        those spends three requests (a 5-day history plus two for
+        fast_info) — on the 5-minute position refresh that alone was
+        ~3,000 requests/hour, well past what the IP is allowed.
+
+        Crypto still goes to CoinGecko in its own batched call.
+
+        Falls back to the per-ticker path only for symbols the batch
+        didn't return, and only for a handful of them: a large miss means
+        the provider is unhappy, and retrying 90 symbols one at a time is
+        precisely the behaviour that turns a throttle into a ban.
+        """
         crypto_tickers = filter_crypto(tickers)
         equity_tickers = filter_non_crypto(tickers)
 
+        out: list[dict] = []
         tasks: list = []
+
         if equity_tickers:
-            tasks.extend(self.get_quote(t) for t in equity_tickers)
+            fresh: list[str] = []
+            import time as _time
+            for t in equity_tickers:
+                cached = _QUOTE_CACHE.get(t)
+                if cached and (_time.monotonic() - cached[0]) < _QUOTE_TTL:
+                    out.append(cached[1])
+                else:
+                    fresh.append(t)
+
+            if fresh:
+                try:
+                    batch = await yahoo_quotes.get_many(fresh)
+                except Exception as exc:
+                    log.warning("Batched quote fetch failed: %s", exc)
+                    batch = {}
+
+                missing: list[str] = []
+                for t in fresh:
+                    row = batch.get(t.upper())
+                    if row and row.get("price") is not None:
+                        quote = {
+                            "ticker": t,
+                            "price": row["price"],
+                            "previous_close": row["previous_close"] if row["previous_close"] is not None else row["price"],
+                            "change": round(row["change"], 4) if row.get("change") is not None else 0.0,
+                            "change_pct": round(row["change_pct"], 2) if row.get("change_pct") is not None else 0.0,
+                            "volume": int(row["volume"]) if row.get("volume") is not None else 0,
+                            "market_cap": row.get("market_cap"),
+                            "fifty_two_week_high": row.get("fifty_two_week_high"),
+                            "fifty_two_week_low": row.get("fifty_two_week_low"),
+                        }
+                        _QUOTE_CACHE[t] = (_time.monotonic(), quote)
+                        out.append(quote)
+                    else:
+                        missing.append(t)
+
+                if missing:
+                    log.info(
+                        "Batched quotes missed %d/%d symbol(s): %s",
+                        len(missing), len(fresh), ", ".join(missing[:10]),
+                    )
+                    if len(missing) <= MAX_SINGLE_QUOTE_FALLBACKS:
+                        tasks.extend(self.get_quote(t) for t in missing)
+                    else:
+                        log.warning(
+                            "Skipping per-ticker fallback for %d symbols — too many "
+                            "misses to retry individually without risking a throttle",
+                            len(missing),
+                        )
+
         if crypto_tickers:
             tasks.append(CryptoMarketDataService.get_quotes(crypto_tickers))
 
-        if not tasks:
-            return []
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in results:
+                if isinstance(r, Exception):
+                    continue
+                if isinstance(r, list):
+                    out.extend(r)
+                else:
+                    out.append(r)
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        out: list[dict] = []
-        for r in results:
-            if isinstance(r, Exception):
-                continue
-            if isinstance(r, list):
-                out.extend(r)
-            else:
-                out.append(r)
+        # Preserve the caller's ordering — callers zip this against their
+        # own ticker list in places.
+        order = {t.upper(): i for i, t in enumerate(tickers)}
+        out.sort(key=lambda q: order.get(str(q.get("ticker", "")).upper(), 10_000))
         return out
 
     async def get_history(self, ticker: str, period: str, interval: str) -> dict:
@@ -277,10 +360,36 @@ class MarketDataService:
         cached = _QUOTE_CACHE.get(ticker)
         return cached[1] if cached else None
 
-    async def get_ohlcv_dataframe(self, ticker: str, period: str = "6mo", interval: str = "1d"):
-        """Returns a pandas DataFrame — used internally by the signal engine."""
+    async def get_ohlcv_dataframe(
+        self,
+        ticker: str,
+        period: str = "6mo",
+        interval: str = "1d",
+        budget_timeout: float | None = None,
+    ):
+        """Returns a pandas DataFrame — used internally by the signal engine.
+
+        One provider request per call, and there is no batch equivalent
+        for history, so this is the chokepoint every per-ticker fetch
+        passes through: the signal scan (every watchlist ticker, every 15
+        minutes), momentum scores, and the backtest scripts. Gating it
+        here covers all of them at once.
+
+        Returns an empty frame when the budget is unavailable rather than
+        raising. Callers already treat an empty frame as "no data" — the
+        signal providers skip the ticker, which is the correct response
+        to "we are out of requests this hour".
+        """
         if is_crypto(ticker):
             return await CryptoMarketDataService.get_ohlcv_dataframe(ticker, period, interval)
+
+        if not await spend(1, timeout=budget_timeout):
+            import pandas as pd
+
+            log.warning(
+                "Yahoo budget: skipping history for %s (%s/%s)", ticker, period, interval
+            )
+            return pd.DataFrame()
 
         def _fetch():
             return yf.Ticker(ticker).history(period=period, interval=interval)

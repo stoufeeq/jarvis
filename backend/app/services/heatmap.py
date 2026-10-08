@@ -3,18 +3,29 @@ Heatmap service — batch-fetches S&P 500 quotes and builds a sector tree
 suitable for rendering as a Recharts Treemap (heatmap) or ScatterChart
 (bubbles) on the frontend.
 
-Two data sources, used independently:
-- yf.download(period="1mo", interval="1d") — used ONLY for the 20-day
-  volume series (for the relative-volume bubble-chart axis).
-- yfinance Ticker.fast_info — used for change_pct via (lastPrice -
-  previousClose) / previousClose. The historical-bar feed occasionally
-  drops valid trading days (a 2026-06-15 example caused WDC to show
-  Friday-to-Tuesday move instead of Monday-to-Tuesday), but fast_info's
-  previousClose is reliable.
+One data source: Yahoo's batched /v7/finance/quote endpoint, via
+app/services/yahoo_quotes.py. Five requests cover all ~452 constituents
+and carry price, previous close, change %, volume and 10-day average
+volume.
 
-fast_info is per-ticker (no batch endpoint), so we parallelise with a
-ThreadPoolExecutor. Combined with the volume fetch, a cold heatmap takes
-~10-15s; warm hits return from Redis instantly.
+It used to be two, and they were ruinously expensive. yf.download for
+the volume series cost ~453 requests (download() threads per ticker; it
+does not batch, despite the name) and fast_info for change_pct cost
+another ~904 (two requests each). About 1,357 requests every ten
+minutes — 8,100/hour from one IP, against a limit the community puts
+near 360/hour. That is what got the server throttled, and the 429s then
+surfaced as 75 holdings "likely delisted", AAPL and NVDA among them.
+
+The batched endpoint also removed the reason the two sources existed.
+fast_info was there because the historical-bar feed occasionally drops a
+valid trading day (2026-06-15 made WDC show a Friday-to-Tuesday move),
+so previousClose came from one path and the comparison from the other.
+/v7/finance/quote returns regularMarketPrice and
+regularMarketPreviousClose from the same snapshot, which is the
+agreement the reconciliation was approximating.
+
+A cold heatmap now takes ~2s rather than ~10-15s; warm hits return from
+Redis instantly.
 
 Cache lives in Redis (not a per-process dict) so the celery-worker's
 30-min pre-warm task and the API backend share the same data. Without
@@ -27,27 +38,29 @@ import json
 import logging
 import math
 import time
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import redis.asyncio as aioredis
 
 from app.config import get_settings
 from app.data.sp500 import SP500
+from app.services import yahoo_quotes
 
 log = logging.getLogger(__name__)
 
 CACHE_KEY = "heatmap:sp500"
+# Last successful payload, kept far longer than the serving cache. When a
+# fetch fails — a throttle, an outage, an exhausted request budget — a
+# day-old heatmap labelled stale is strictly better than an empty one:
+# empty renders as a uniformly flat market, which is a lie, and it would
+# also be cached for ten minutes and hide the recovery.
+LAST_GOOD_KEY = "heatmap:sp500:last_good"
+LAST_GOOD_TTL = 86_400
 # 10 min TTL matches the Celery pre-warm interval + frontend refetchInterval.
 # Previously 30 min but 30 min stale × 30 min client staleTime meant worst-case
 # 60-min-old data on the dashboard, which felt broken during active trading
 # hours. 10 min is still 4x the ~2.5-min fetch time so pre-warm never overlaps.
 CACHE_TTL = 600  # 10 minutes
-
-# fast_info per-ticker is sequential by default. yfinance's underlying
-# requests session is thread-safe enough for ~10 concurrent calls without
-# rate-limit issues in practice.
-FAST_INFO_WORKERS = 10
 
 # Lazy-inited shared Redis client per process. aioredis clients have an
 # internal connection pool so reusing one across calls is the right
@@ -64,12 +77,12 @@ def _redis() -> aioredis.Redis:
     return _redis_client
 
 
-async def _cache_get() -> dict | None:
-    """Return the cached heatmap payload, or None on miss / any Redis
+async def _cache_get(key: str = CACHE_KEY) -> dict | None:
+    """Return a cached heatmap payload, or None on miss / any Redis
     failure. Redis-down is treated as a cache miss — same effect as an
     empty cache today, so nothing regresses if Redis goes offline."""
     try:
-        raw = await _redis().get(CACHE_KEY)
+        raw = await _redis().get(key)
         if raw:
             return json.loads(raw)
         return None
@@ -80,7 +93,13 @@ async def _cache_get() -> dict | None:
 
 async def _cache_set(data: dict) -> None:
     try:
-        await _redis().set(CACHE_KEY, json.dumps(data), ex=CACHE_TTL)
+        blob = json.dumps(data)
+        await _redis().set(CACHE_KEY, blob, ex=CACHE_TTL)
+        # Only a payload with real prices becomes the stale fallback —
+        # otherwise a failed fetch would overwrite the good copy it
+        # exists to preserve.
+        if not data.get("error"):
+            await _redis().set(LAST_GOOD_KEY, blob, ex=LAST_GOOD_TTL)
     except Exception:
         log.warning("Redis SET failed on heatmap cache — next call will refetch", exc_info=True)
 
@@ -92,17 +111,32 @@ class HeatmapService:
             if cached:
                 return cached
 
-        loop = asyncio.get_event_loop()
-        data = await loop.run_in_executor(None, _fetch_heatmap_sync)
+        data = await _fetch_heatmap()
 
+        # A fetch that came back empty is a throttle or an outage, not a
+        # flat market. Caching it would pin an empty heatmap for ten
+        # minutes and hide the recovery, so serve stale instead.
+        if not data.pop("_any_data", False):
+            stale = await _cache_get(LAST_GOOD_KEY)
+            if stale:
+                log.warning("Heatmap fetch failed; serving stale cache")
+                stale["stale"] = True
+                stale["error"] = data.get("error") or "fetch returned no quotes"
+                return stale
         await _cache_set(data)
         return data
 
 
 def _reconcile_change(fast_info: float | None, download: float | None) -> float | None:
-    """Merge fast_info and download-derived change_pct into a single
-    value. See callsite for the reasoning behind picking the more
-    extreme reading on disagreement."""
+    """Merge two independently-sourced change_pct readings, preferring the
+    more extreme when they disagree by more than a point.
+
+    No longer used by the heatmap: /v7/finance/quote returns price and
+    previousClose from one snapshot, so there are no longer two feeds to
+    disagree. Kept because the rule it encodes is still correct and still
+    tested — a lagging snapshot understates a move, so the larger
+    absolute reading is the one that saw the price later. Delete it if a
+    second source never reappears."""
     if fast_info is None and download is None:
         return None
     if fast_info is None:
@@ -114,157 +148,70 @@ def _reconcile_change(fast_info: float | None, download: float | None) -> float 
     return download if abs(download) > abs(fast_info) else fast_info
 
 
-def _change_pct_via_fast_info(ticker: str) -> float | None:
-    """Return today's change_pct using yfinance fast_info, or None on error.
+async def _fetch_heatmap() -> dict:
+    """Fetch every constituent in five batched requests.
 
-    fast_info exposes previousClose (yesterday's settled close, even when
-    the historical-bar download() is missing that day) and lastPrice
-    (current intraday quote). Both are needed for an accurate same-day
-    change calculation.
+    change_pct comes straight from the quote: price and previousClose
+    arrive in one snapshot, so there is nothing to reconcile between two
+    feeds (_reconcile_change is kept for the tests that pin its
+    behaviour, and for any caller still merging two sources).
+
+    rel_volume is today's volume against the 10-day average. The old code
+    used a 20-day average built from a 1mo history fetch; 10-day comes
+    free in the quote and the figure is read as a rough "busier than
+    usual", not a precise ratio. Both share the same quirk: during the
+    session today's volume is partial, so early in the day everything
+    looks quiet.
     """
-    import yfinance as yf
-
-    try:
-        fi = yf.Ticker(ticker).fast_info
-        # fast_info is dict-like; keys can vary across yfinance versions.
-        prev = fi.get("previousClose") or fi.get("regularMarketPreviousClose")
-        last = fi.get("lastPrice") or fi.get("regularMarketPrice") or fi.get("last_price")
-        if prev is None or last is None:
-            return None
-        prev_f = float(prev)
-        last_f = float(last)
-        if prev_f <= 0 or not math.isfinite(prev_f) or not math.isfinite(last_f):
-            return None
-        return round((last_f - prev_f) / prev_f * 100, 2)
-    except Exception:
-        # yfinance throws all kinds of things (HTTP errors, JSON decode,
-        # delisted tickers). Caller falls back to download-derived value.
-        return None
-
-
-def _fetch_heatmap_sync() -> dict:
-    import yfinance as yf
-
     tickers = [s["ticker"] for s in SP500]
 
     change_map: dict[str, float | None] = {}
     vol_map: dict[str, float | None] = {}
-    download_change_fallback: dict[str, float | None] = {}
+    error: str | None = None
 
-    # ── Volume series (download) ──────────────────────────────────────────
-    # 1mo of daily bars for the 20-day volume average. Also kept as a
-    # fallback source of change_pct in case fast_info fails for a ticker.
-    download_error: str | None = None
     try:
-        df = yf.download(
-            tickers,
-            period="1mo",
-            interval="1d",
-            auto_adjust=True,
-            progress=False,
-            threads=True,
+        # Background job: wait a good while for budget rather than
+        # giving up. A missed warm leaves the dashboard on stale data.
+        quotes = await yahoo_quotes.get_many(tickers, budget_timeout=120.0)
+    except Exception as exc:
+        log.warning("Heatmap quote fetch failed: %s", exc)
+        quotes, error = {}, str(exc)
+
+    if not quotes and not error:
+        error = "no quotes returned (request budget exhausted or provider throttling)"
+
+    for ticker in tickers:
+        q = quotes.get(ticker.upper())
+        if not q:
+            change_map[ticker] = None
+            vol_map[ticker] = None
+            continue
+
+        change_map[ticker] = (
+            round(q["change_pct"], 2) if q.get("change_pct") is not None else None
         )
 
-        closes  = df.get("Close")
-        volumes = df.get("Volume")
-
-        if closes is None:
-            raise ValueError("No Close column in download result")
-
-        for ticker in tickers:
-            # ── change % fallback ─────────────────────────────────────────
-            try:
-                series = (closes if len(tickers) == 1 else closes[ticker]).dropna()
-                if len(series) >= 2:
-                    prev = float(series.iloc[-2])
-                    curr = float(series.iloc[-1])
-                    if prev and math.isfinite(prev) and math.isfinite(curr):
-                        download_change_fallback[ticker] = round((curr - prev) / prev * 100, 2)
-                    else:
-                        download_change_fallback[ticker] = None
-                elif len(series) == 1:
-                    download_change_fallback[ticker] = 0.0
-                else:
-                    download_change_fallback[ticker] = None
-            except (KeyError, IndexError, TypeError, ValueError):
-                download_change_fallback[ticker] = None
-
-            # ── relative volume ───────────────────────────────────────────
-            try:
-                if volumes is None:
-                    vol_map[ticker] = None
-                    continue
-                vseries = (volumes if len(tickers) == 1 else volumes[ticker]).dropna()
-                if len(vseries) >= 2:
-                    today_vol = float(vseries.iloc[-1])
-                    avg_vol   = float(vseries.iloc[:-1].mean())
-                    if avg_vol and math.isfinite(avg_vol) and math.isfinite(today_vol):
-                        vol_map[ticker] = round(today_vol / avg_vol, 2)
-                    else:
-                        vol_map[ticker] = None
-                else:
-                    vol_map[ticker] = None
-            except (KeyError, IndexError, TypeError, ValueError):
-                vol_map[ticker] = None
-
-    except Exception as exc:
-        log.warning("Heatmap volume/fallback download failed: %s", exc)
-        download_error = str(exc)
-
-    # ── change_pct via fast_info (parallel) ───────────────────────────────
-    # Per-ticker call but threadpool keeps it ~10s total. fast_info has
-    # previousClose / lastPrice that the historical-bar feed sometimes
-    # misses (e.g. 2026-06-15 was missing from download but present here).
-    fast_results: dict[str, float | None] = {}
-    with ThreadPoolExecutor(max_workers=FAST_INFO_WORKERS) as exe:
-        fast_results = dict(zip(tickers, exe.map(_change_pct_via_fast_info, tickers)))
-
-    # Reconcile fast_info vs download-derived change %:
-    # - Both None                                 → None
-    # - Only one available                        → use it
-    # - Both available and within ~1 pp           → use download (batched
-    #   fetch is more consistent)
-    # - Both available but disagree by > ~1 pp    → use the more extreme
-    #   reading. Rationale: yfinance's fast_info.lastPrice is known to lag
-    #   for heavy-volume names (Aug 28 2026 saw CRM at true +21% but
-    #   fast_info stuck at +7% for hours). Stale readings tend to be
-    #   *smaller* because the price moved further after the snapshot was
-    #   taken; whichever data path shows the larger absolute move captured
-    #   the ticker's price later in the day.
-    fast_info_used = 0
-    download_used = 0
-    disagreements = 0
-    for ticker in tickers:
-        from_fast = fast_results.get(ticker)
-        from_download = download_change_fallback.get(ticker)
-        chosen = _reconcile_change(from_fast, from_download)
-        change_map[ticker] = chosen
-        if chosen is None:
-            continue
-        if from_fast is not None and from_download is not None:
-            if abs(from_fast - from_download) > 3.0:
-                disagreements += 1
-                log.info(
-                    "Heatmap reconcile %s: fast_info=%.2f%% vs download=%.2f%%, using %.2f%% (%s)",
-                    ticker, from_fast, from_download, chosen,
-                    "download" if chosen == from_download else "fast_info",
-                )
-        if chosen == from_download:
-            download_used += 1
+        vol = q.get("volume")
+        avg = q.get("avg_volume_10d") or q.get("avg_volume_3m")
+        if vol and avg and math.isfinite(vol) and math.isfinite(avg) and avg > 0:
+            vol_map[ticker] = round(vol / avg, 2)
         else:
-            fast_info_used += 1
+            vol_map[ticker] = None
 
+    resolved = sum(1 for v in change_map.values() if v is not None)
     log.info(
-        "Heatmap fetched: fast_info=%d download=%d disagreements>3pp=%d",
-        fast_info_used, download_used, disagreements,
+        "Heatmap fetched: %d/%d constituents priced in %d request(s)",
+        resolved, len(tickers), yahoo_quotes.request_cost(tickers),
     )
 
     payload: dict[str, Any] = {
         "sectors": _build_sectors(change_map, vol_map),
         "cached_at": time.time(),
+        # Internal flag so the caller can tell "partial" from "nothing".
+        "_any_data": resolved > 0,
     }
-    if download_error:
-        payload["error"] = download_error
+    if error:
+        payload["error"] = error
     return payload
 
 

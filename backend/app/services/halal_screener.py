@@ -42,6 +42,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.halal_compliance import HalalCompliance, HalalStatus
+from app.services.rate_limit import spend
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +51,9 @@ log = logging.getLogger(__name__)
 # a user's page load. The inputs are balance-sheet figures that move
 # quarterly at most.
 CACHE_TTL = timedelta(days=35)
+
+# Provider requests one .info call costs (yfinance 1.2.2).
+SCREEN_REQUEST_COST = 2
 DEBT_RATIO_MAX = 0.33      # AAOIFI 33% threshold
 CASH_RATIO_MAX = 0.33
 
@@ -151,6 +155,20 @@ class HalalScreenerService:
             async def one(t: str) -> tuple[str, dict[str, Any]]:
                 async with sem:
                     return t, await self._compute(t)
+
+            # Whitelisted ETFs resolve without touching the provider, so
+            # only the rest consume budget. The monthly refresh walks the
+            # whole book at once and would otherwise burst through it.
+            paid = [t for t in misses if t not in _COMPLIANT_ETFS]
+            if paid and not await spend(
+                len(paid) * SCREEN_REQUEST_COST, timeout=120.0
+            ):
+                log.warning(
+                    "Halal screen: request budget unavailable for %d ticker(s); "
+                    "serving what is cached and leaving the rest for the next run",
+                    len(paid),
+                )
+                return [out[t] for t in unique if t in out]
 
             verdicts = await asyncio.gather(*[one(t) for t in misses])
 

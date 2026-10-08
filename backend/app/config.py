@@ -29,6 +29,27 @@ class Settings(BaseSettings):
     polygon_api_key: str = ""
     alpha_vantage_api_key: str = ""
 
+    # Yahoo request budget, shared across every process on this host.
+    #
+    # Yahoo publishes no limit for these undocumented endpoints. The
+    # figure the community converges on is ~360 requests/hour/IP, from a
+    # 2024 yfinance issue; it is unverified, and the practical evidence
+    # is that exceeding it gets the IP throttled with 429s that look
+    # exactly like delisted symbols.
+    #
+    # 300/hour leaves headroom under that figure. See
+    # app/services/rate_limit.py for the arithmetic of what fits.
+    yf_requests_per_hour: int = 300
+
+    # How long a caller will wait for a token before giving up. Longer
+    # than this and a web request would hang; background jobs pass their
+    # own larger timeout.
+    yf_rate_limit_wait_seconds: float = 20.0
+
+    # Kill switch. False disables throttling entirely — for local
+    # development against a fresh IP, never in production.
+    yf_rate_limit_enabled: bool = True
+
     # IBKR
     ibkr_host: str = "127.0.0.1"
     ibkr_port: int = 7497

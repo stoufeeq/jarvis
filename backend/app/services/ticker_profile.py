@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ticker_profile import TickerProfile
+from app.services.rate_limit import spend
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +34,10 @@ CACHE_TTL = timedelta(days=90)
 UNKNOWN_RETRY_TTL = timedelta(days=3)
 
 CONCURRENCY = 8
+
+# Provider requests one .info call costs, measured against yfinance
+# 1.2.2. Used to reserve budget before spending it.
+PROFILE_REQUEST_COST = 2
 
 
 class TickerProfileService:
@@ -61,6 +66,18 @@ class TickerProfileService:
 
             async def one(t: str) -> tuple[str, dict | None]:
                 async with sem:
+                    # .info costs ~2 provider requests. Reserve them
+                    # before spending them; without this a first load of
+                    # the Allocation tab for a 40-name book would fire 80
+                    # requests in a couple of seconds, which is a quarter
+                    # of the hourly budget in one burst.
+                    if not await spend(PROFILE_REQUEST_COST):
+                        log.warning(
+                            "Ticker profile: skipping %s — request budget "
+                            "unavailable. Sector shows as Unclassified until "
+                            "the next attempt.", t,
+                        )
+                        return t, None
                     return t, await asyncio.to_thread(self._fetch, t)
 
             fetched = await asyncio.gather(*(one(t) for t in misses))

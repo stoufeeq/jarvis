@@ -62,13 +62,21 @@ async def _health(db, ticker: str, **kw) -> TickerHealth:
     return row
 
 
-def _probe(results: dict[str, bool]):
-    """Stub the provider probe. `results` maps ticker → resolves."""
-    def fake(ticker: str):
-        ok = results.get(ticker.upper(), True)
-        return (True, None) if ok else (False, "no price and no recent history")
+def _probe(results: dict[str, bool], error: str = "not returned by the provider's quote endpoint"):
+    """Stub the provider probe. `results` maps ticker → resolves.
 
-    return patch.object(TickerHealthService, "_probe_sync", staticmethod(fake))
+    Patches _probe_batch, not _probe_sync: check_all resolves every
+    ticker in one batched request now, and stubbing the per-ticker
+    helper would test a path production no longer takes.
+    """
+    async def fake(tickers):
+        return [
+            (t, results.get(t.upper(), True),
+             None if results.get(t.upper(), True) else error)
+            for t in tickers
+        ]
+
+    return patch.object(TickerHealthService, "_probe_batch", staticmethod(fake))
 
 
 # ── Which tickers get tracked ─────────────────────────────────────────
@@ -312,9 +320,10 @@ async def test_unresolvable_ignores_untracked_tickers(db):
 
 @pytest.mark.asyncio
 async def test_check_all_with_no_tickers_is_a_noop(db):
-    assert await TickerHealthService(db).check_all() == {
-        "checked": 0, "broken": 0, "recovered": 0,
-    }
+    result = await TickerHealthService(db).check_all()
+    assert result["checked"] == 0
+    assert result["broken"] == 0
+    assert result["recovered"] == 0
 
 
 # ── Provider outage vs bad symbols ────────────────────────────────────
@@ -328,11 +337,7 @@ async def test_check_all_with_no_tickers_is_a_noop(db):
 def _probe_err(results: dict[str, bool], error: str):
     """Like _probe, but lets the test choose the failure message — the
     error text is what separates a throttled probe from a dead symbol."""
-    def fake(ticker: str):
-        ok = results.get(ticker.upper(), True)
-        return (True, None) if ok else (False, error)
-
-    return patch.object(TickerHealthService, "_probe_sync", staticmethod(fake))
+    return _probe(results, error=error)
 
 
 async def _book(db, tickers: list[str]):

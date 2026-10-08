@@ -30,6 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.portfolio import BrokerType, Portfolio, Position
+from app.data.crypto import is_crypto
 from app.models.ticker_health import TickerHealth
 from app.models.watchlist import Watchlist, WatchlistItem
 
@@ -71,6 +72,7 @@ class TickerHealthService:
         "429", "too many requests", "rate limit", "ratelimit",
         "timeout", "timed out", "connection", "temporarily unavailable",
         "503", "502", "504", "curl", "ssl", "max retries",
+        "budget exhausted", "returned nothing",
     )
 
     @classmethod
@@ -114,7 +116,11 @@ class TickerHealthService:
 
     @staticmethod
     def _probe_sync(ticker: str) -> tuple[bool, str | None]:
-        """Blocking provider probe. Returns (resolved, error).
+        """Blocking single-ticker probe. Returns (resolved, error).
+
+        Costs three provider requests, so it is NOT the path check_all
+        uses — see _probe_batch. Kept for one-off checks and because the
+        test suite stubs it.
 
         Tries a live price first, then falls back to recent history —
         some valid symbols (thin ADRs, certain foreign listings) have no
@@ -139,6 +145,45 @@ class TickerHealthService:
         except Exception as exc:
             return False, f"{type(exc).__name__}: {exc}"[:400]
 
+    @staticmethod
+    async def _probe_batch(tickers: list[str]) -> list[tuple[str, bool, str | None]]:
+        """Probe every ticker in one or two batched requests.
+
+        Yahoo's batched quote endpoint omits symbols it cannot resolve,
+        which is a far better signal than the per-ticker path gave: that
+        one spent three requests each (~270 for a 90-ticker book, daily)
+        and could not distinguish a bad symbol from a throttled request,
+        because both arrive as an exception or an empty frame.
+
+        Here the distinction is structural. A transport failure takes the
+        whole batch down, so every ticker fails together and check_all's
+        outage guard catches it. A symbol missing from an otherwise
+        healthy response is genuinely unknown to the provider.
+        """
+        from app.services import yahoo_quotes
+
+        try:
+            quotes = await yahoo_quotes.get_many(tickers, budget_timeout=60.0)
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"[:400]
+            return [(t, False, err) for t in tickers]
+
+        if not quotes:
+            # Budget exhausted or every chunk failed. Marked as a
+            # transport error so it is discounted even if the ratio
+            # somehow lands under the outage threshold.
+            err = "batched quote request returned nothing (throttled or budget exhausted)"
+            return [(t, False, err) for t in tickers]
+
+        out: list[tuple[str, bool, str | None]] = []
+        for t in tickers:
+            q = quotes.get(t.upper())
+            if q and q.get("price") is not None:
+                out.append((t, True, None))
+            else:
+                out.append((t, False, "not returned by the provider's quote endpoint"))
+        return out
+
     async def check_all(self, user_id: int | None = None) -> dict:
         """Probe every tracked ticker and update its health row.
 
@@ -146,18 +191,27 @@ class TickerHealthService:
         last_ok_at. Failure increments, and only once the count reaches
         FAILURE_THRESHOLD is the ticker marked as not resolving.
         """
-        tickers = await self.tracked_tickers(user_id)
+        tracked = await self.tracked_tickers(user_id)
+
+        # Crypto resolves through CoinGecko, not Yahoo. Probing "BTC"
+        # against a Yahoo quote endpoint fails every time — Yahoo spells
+        # it BTC-USD — so including them produced permanent false
+        # positives. BTC and ETH were both in the 75-ticker false alarm.
+        # A broken crypto symbol needs its own probe against the provider
+        # that actually serves it; until that exists, silence beats a
+        # guaranteed-wrong verdict.
+        tickers = [t for t in tracked if not is_crypto(t)]
+        skipped_crypto = len(tracked) - len(tickers)
+        if skipped_crypto:
+            log.debug(
+                "Ticker health: skipped %d crypto symbol(s) — served by CoinGecko",
+                skipped_crypto,
+            )
+
         if not tickers:
-            return {"checked": 0, "broken": 0, "recovered": 0}
+            return {"checked": 0, "broken": 0, "recovered": 0, "outage": False}
 
-        sem = asyncio.Semaphore(self.CONCURRENCY)
-
-        async def _one(t: str) -> tuple[str, bool, str | None]:
-            async with sem:
-                ok, err = await asyncio.to_thread(self._probe_sync, t)
-                return t, ok, err
-
-        results = await asyncio.gather(*(_one(t) for t in tickers))
+        results = await self._probe_batch(tickers)
 
         failures = [(t, e) for t, ok, e in results if not ok]
         ratio = len(failures) / len(results)
