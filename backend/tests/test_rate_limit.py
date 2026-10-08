@@ -296,3 +296,65 @@ async def test_partial_chunk_failure_returns_what_succeeded(monkeypatch):
     monkeypatch.setattr(yahoo_quotes, "_fetch_chunk_sync", flaky)
     out = await yahoo_quotes.get_many([f"T{i}" for i in range(150)])
     assert 0 < len(out) < 150
+
+
+# ── Deadlines ─────────────────────────────────────────────────────────
+#
+# A throttled Yahoo makes yfinance retry its cookie/crumb handshake
+# internally, so an HTTP timeout bounds one attempt but not the call.
+# Observed live: a recheck hung with no output. In a Celery worker that
+# is worse than a failure — the task never returns and beat queues the
+# next run behind it.
+
+
+async def test_a_hanging_chunk_times_out_instead_of_blocking(monkeypatch):
+    monkeypatch.setattr(yahoo_quotes, "spend", lambda *a, **k: _true())
+    monkeypatch.setattr(yahoo_quotes, "CHUNK_DEADLINE", 0.2)
+
+    def never_returns(_syms):
+        import time as _t
+        _t.sleep(30)
+        return []
+
+    monkeypatch.setattr(yahoo_quotes, "_fetch_chunk_sync", never_returns)
+
+    import time as _t
+    start = _t.monotonic()
+    with pytest.raises(RuntimeError, match="All 1 Yahoo quote request"):
+        await yahoo_quotes.get_many(["AAPL"])
+    assert _t.monotonic() - start < 5, "must not wait on the hung thread"
+
+
+async def test_total_deadline_stops_further_chunks(monkeypatch):
+    """A slow provider must not let 5 chunks stack into minutes."""
+    monkeypatch.setattr(yahoo_quotes, "spend", lambda *a, **k: _true())
+    monkeypatch.setattr(yahoo_quotes, "CHUNK_DEADLINE", 0.2)
+    monkeypatch.setattr(yahoo_quotes, "TOTAL_DEADLINE", 0.5)
+    calls = {"n": 0}
+
+    def slow(syms):
+        calls["n"] += 1
+        import time as _t
+        _t.sleep(5)
+        return []
+
+    monkeypatch.setattr(yahoo_quotes, "_fetch_chunk_sync", slow)
+    import time as _t
+    start = _t.monotonic()
+    try:
+        await yahoo_quotes.get_many([f"T{i}" for i in range(500)])
+    except RuntimeError:
+        pass
+    elapsed = _t.monotonic() - start
+    assert elapsed < 5, f"took {elapsed:.1f}s"
+    assert calls["n"] < 5, "stopped before attempting every chunk"
+
+
+async def test_a_fast_chunk_is_unaffected_by_the_deadline(monkeypatch):
+    monkeypatch.setattr(yahoo_quotes, "spend", lambda *a, **k: _true())
+    monkeypatch.setattr(yahoo_quotes, "_fetch_chunk_sync", lambda syms: [
+        {"symbol": s, "regularMarketPrice": 1.0, "regularMarketPreviousClose": 1.0}
+        for s in syms
+    ])
+    out = await yahoo_quotes.get_many([f"T{i}" for i in range(250)])
+    assert len(out) == 250

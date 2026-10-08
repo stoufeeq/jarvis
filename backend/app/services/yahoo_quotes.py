@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
 from typing import Any
 
 from app.services.rate_limit import spend
@@ -52,6 +53,22 @@ QUOTE_URL = "https://query2.finance.yahoo.com/v7/finance/quote"
 # length limits. Five requests for the whole S&P 500 is already cheap
 # enough that squeezing it further buys nothing.
 CHUNK = 100
+
+# Per-request network timeout handed to yfinance. Its default is 30s,
+# which is too patient for a job on a schedule.
+HTTP_TIMEOUT = 15
+
+# Hard ceiling per chunk, enforced outside yfinance. Needed because
+# yfinance retries its cookie/crumb handshake internally when Yahoo is
+# throttling, so the HTTP timeout above bounds one attempt but not the
+# call. Without this a throttled provider can wedge a Celery worker — the
+# task never returns, beat queues the next one behind it, and the queue
+# backs up behind a request that is never coming.
+CHUNK_DEADLINE = 25.0
+
+# Ceiling for a whole get_many across all its chunks, so a 5-chunk
+# heatmap fetch cannot stack five deadlines into two minutes.
+TOTAL_DEADLINE = 60.0
 
 
 def _f(value: Any) -> float | None:
@@ -106,7 +123,9 @@ def _fetch_chunk_sync(symbols: list[str]) -> list[dict]:
     """Blocking single-request fetch for up to CHUNK symbols."""
     from yfinance.data import YfData
 
-    raw = YfData().get_raw_json(QUOTE_URL, params={"symbols": ",".join(symbols)})
+    raw = YfData().get_raw_json(
+        QUOTE_URL, params={"symbols": ",".join(symbols)}, timeout=HTTP_TIMEOUT
+    )
     body = raw.get("quoteResponse") or {}
     if body.get("error"):
         raise RuntimeError(f"Yahoo quote error: {body['error']}")
@@ -151,12 +170,36 @@ async def get_many(
 
     out: dict[str, dict] = {}
     failures = 0
+    started = time.monotonic()
+
     for group in groups:
+        remaining = TOTAL_DEADLINE - (time.monotonic() - started)
+        if remaining <= 0:
+            failures += 1
+            log.warning(
+                "Yahoo quote fetch hit its %.0fs total deadline with %d chunk(s) "
+                "unfetched", TOTAL_DEADLINE, len(groups) - len(out) // CHUNK,
+            )
+            break
         try:
-            for q in await asyncio.to_thread(_fetch_chunk_sync, group):
+            # wait_for abandons the await; the worker thread finishes on
+            # its own and its result is discarded. That leaks a thread
+            # briefly, which is the acceptable cost of never blocking the
+            # caller indefinitely.
+            rows = await asyncio.wait_for(
+                asyncio.to_thread(_fetch_chunk_sync, group),
+                timeout=min(CHUNK_DEADLINE, remaining),
+            )
+            for q in rows:
                 row = _normalise(q)
                 if row["ticker"]:
                     out[str(row["ticker"]).upper()] = row
+        except TimeoutError:
+            failures += 1
+            log.warning(
+                "Yahoo quote chunk of %d timed out after %.0fs — provider is "
+                "likely throttling", len(group), min(CHUNK_DEADLINE, remaining),
+            )
         except Exception as exc:
             failures += 1
             log.warning(
