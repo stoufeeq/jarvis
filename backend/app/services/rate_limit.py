@@ -104,11 +104,30 @@ class YahooRateLimiter:
         self._enabled = s.yf_rate_limit_enabled
         self._client: aioredis.Redis | None = None
         self._script = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     async def _conn(self) -> aioredis.Redis:
-        if self._client is None:
+        """Return a client bound to the CURRENT event loop.
+
+        Every Celery task in this app runs `asyncio.run`, which builds
+        and tears down a loop per task. A module-level client would hand
+        the second task connections belonging to a dead loop — and
+        because this limiter fails open, the breakage would be silent:
+        it would stop throttling while still reporting success, which is
+        worse than having no limiter at all. So the client is rebuilt
+        whenever the running loop changes.
+
+        The superseded client is dropped rather than closed: awaiting
+        aclose() on a loop that no longer exists is itself an error. Its
+        connections are collected by the GC, which can log a benign
+        "Event loop is closed" at that point. close() exists for entry
+        points that can clean up properly.
+        """
+        loop = asyncio.get_running_loop()
+        if self._client is None or self._loop is not loop:
             self._client = aioredis.from_url(self._url, decode_responses=True)
             self._script = self._client.register_script(_ACQUIRE_LUA)
+            self._loop = loop
         return self._client
 
     async def try_acquire(self, cost: int = 1) -> tuple[bool, int, float]:
@@ -184,9 +203,16 @@ class YahooRateLimiter:
             return {"enabled": True, "error": str(exc), "budget": self._budget}
 
     async def close(self) -> None:
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        """Release the Redis connection. Call from any entry point that
+        owns its event loop — without it, the pool is collected after the
+        loop closes and Python prints an alarming-looking traceback from
+        __del__ that has nothing to do with the work that just ran."""
+        client, self._client, self._script, self._loop = self._client, None, None, None
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
 
 
 # Process-wide instance. Cheap to share: the Redis client is lazy and
@@ -204,3 +230,10 @@ def get_limiter() -> YahooRateLimiter:
 async def spend(cost: int = 1, timeout: float | None = None) -> bool:
     """Convenience wrapper: reserve `cost` requests from the hourly budget."""
     return await get_limiter().acquire(cost=cost, timeout=timeout)
+
+
+async def shutdown() -> None:
+    """Close the shared limiter. For scripts and anything else that runs
+    asyncio.run and then exits."""
+    if _limiter is not None:
+        await _limiter.close()

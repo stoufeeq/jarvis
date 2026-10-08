@@ -85,6 +85,17 @@ async def show(db) -> None:
 
 
 async def run(show_only: bool, clear_flags: bool) -> None:
+    try:
+        await _run(show_only, clear_flags)
+    finally:
+        # The limiter holds a Redis connection; closing it here keeps
+        # interpreter shutdown from printing an "Event loop is closed"
+        # traceback that looks like a failure and isn't.
+        from app.services.rate_limit import shutdown
+        await shutdown()
+
+
+async def _run(show_only: bool, clear_flags: bool) -> None:
     async with AsyncSessionLocal() as db:
         await show(db)
 

@@ -52,11 +52,19 @@ class FakeRedisWindow:
         pass
 
 
-def _limiter(budget: int) -> tuple[YahooRateLimiter, FakeRedisWindow]:
+async def _limiter(budget: int) -> tuple[YahooRateLimiter, FakeRedisWindow]:
+    """Pre-wire the fake, including the loop the client is bound to.
+
+    _conn() rebuilds its client whenever the running loop changes — that
+    is what stops a Celery task from reusing connections belonging to a
+    dead loop — so a fake must claim the current loop or it is discarded
+    on first use.
+    """
     fake = FakeRedisWindow()
     lim = YahooRateLimiter(budget=budget)
     lim._client = fake
     lim._script = fake.register_script(None)
+    lim._loop = asyncio.get_running_loop()
     lim._enabled = True
     return lim, fake
 
@@ -65,7 +73,7 @@ def _limiter(budget: int) -> tuple[YahooRateLimiter, FakeRedisWindow]:
 
 
 async def test_spends_up_to_the_budget_then_refuses():
-    lim, _ = _limiter(5)
+    lim, _ = await _limiter(5)
     for _ in range(5):
         granted, _, _ = await lim.try_acquire()
         assert granted
@@ -78,7 +86,7 @@ async def test_spends_up_to_the_budget_then_refuses():
 async def test_a_multi_request_cost_is_all_or_nothing():
     """A 5-chunk heatmap fetch must not get 3 slots and start anyway —
     half a heatmap cached for ten minutes is worse than none."""
-    lim, _ = _limiter(10)
+    lim, _ = await _limiter(10)
     assert (await lim.try_acquire(cost=8))[0] is True
     granted, used, _ = await lim.try_acquire(cost=5)
     assert granted is False
@@ -87,7 +95,7 @@ async def test_a_multi_request_cost_is_all_or_nothing():
 
 
 async def test_cost_is_counted_not_just_the_call():
-    lim, fake = _limiter(100)
+    lim, fake = await _limiter(100)
     await lim.try_acquire(cost=5)
     assert len(fake.entries) == 5
     assert (await lim.usage())["used"] == 5
@@ -96,7 +104,7 @@ async def test_cost_is_counted_not_just_the_call():
 async def test_window_slides_so_old_requests_stop_counting():
     import time
 
-    lim, fake = _limiter(3)
+    lim, fake = await _limiter(3)
     # Three requests, timestamped just over an hour ago.
     stale = time.time() - 3601
     fake.entries = [(stale, f"old:{i}") for i in range(3)]
@@ -108,7 +116,7 @@ async def test_window_slides_so_old_requests_stop_counting():
 async def test_acquire_waits_then_succeeds_when_budget_frees():
     import time
 
-    lim, fake = _limiter(2)
+    lim, fake = await _limiter(2)
     # Full, but the oldest entry leaves the window almost immediately.
     nearly_gone = time.time() - 3599.4
     fake.entries = [(nearly_gone, "a"), (nearly_gone, "b")]
@@ -118,7 +126,7 @@ async def test_acquire_waits_then_succeeds_when_budget_frees():
 async def test_acquire_gives_up_rather_than_proceeding_unthrottled():
     """Returning False matters: a caller that proceeds anyway is what
     turns a throttle into a longer throttle."""
-    lim, fake = _limiter(1)
+    lim, fake = await _limiter(1)
     import time
     fake.entries = [(time.time(), "fresh")]
     assert await lim.acquire(timeout=1.0) is False
@@ -127,7 +135,7 @@ async def test_acquire_gives_up_rather_than_proceeding_unthrottled():
 async def test_concurrent_callers_cannot_both_take_the_last_slot():
     """Three containers share the budget; a read-then-write would let
     each see 299 and proceed."""
-    lim, _ = _limiter(10)
+    lim, _ = await _limiter(10)
     results = await asyncio.gather(*(lim.try_acquire(cost=4) for _ in range(5)))
     granted = [r for r in results if r[0]]
     assert len(granted) == 2, "10 budget / cost 4 = 2 winners, not 3"
@@ -149,12 +157,13 @@ async def test_redis_down_allows_the_call_rather_than_blocking_the_app():
     b = Broken()
     lim._client = b
     lim._script = b.register_script(None)
+    lim._loop = asyncio.get_running_loop()
     granted, _, _ = await lim.try_acquire()
     assert granted is True, "a cache outage must not take the app down"
 
 
 async def test_disabled_limiter_is_a_passthrough():
-    lim, fake = _limiter(1)
+    lim, fake = await _limiter(1)
     lim._enabled = False
     for _ in range(50):
         assert (await lim.try_acquire())[0] is True
@@ -358,3 +367,62 @@ async def test_a_fast_chunk_is_unaffected_by_the_deadline(monkeypatch):
     ])
     out = await yahoo_quotes.get_many([f"T{i}" for i in range(250)])
     assert len(out) == 250
+
+
+# ── Event-loop binding ────────────────────────────────────────────────
+#
+# Every Celery task in this app calls asyncio.run, so each gets a fresh
+# loop while the limiter singleton lives on in the worker process. A
+# client cached across loops hands the second task connections belonging
+# to a dead one — and because this limiter fails OPEN, that breakage is
+# silent: it stops throttling while still reporting success, which is
+# worse than having no limiter.
+
+
+def test_a_new_event_loop_gets_a_new_client():
+    """Mimics two consecutive Celery tasks in one worker process."""
+    lim = YahooRateLimiter(budget=10)
+    lim._enabled = True
+    seen = []
+
+    async def one_task():
+        fake = FakeRedisWindow()
+        # First call in this loop builds a client; substitute the fake
+        # the way _conn would, then record which loop it is bound to.
+        await lim._conn()
+        lim._client = fake
+        lim._script = fake.register_script(None)
+        lim._loop = asyncio.get_running_loop()
+        seen.append(lim._loop)
+        return await lim.try_acquire()
+
+    granted_a, *_ = asyncio.run(one_task())
+    loop_a = seen[-1]
+
+    granted_b, *_ = asyncio.run(one_task())
+    loop_b = seen[-1]
+
+    assert granted_a and granted_b
+    assert loop_a is not loop_b, "each asyncio.run really is a distinct loop"
+    assert lim._loop is loop_b, "limiter rebound to the live loop"
+
+
+async def test_close_releases_the_client_and_allows_rebuild():
+    lim, fake = await _limiter(5)
+    assert await lim.try_acquire() == (True, 1, 0.0)
+
+    await lim.close()
+    assert lim._client is None
+    assert lim._loop is None
+
+    # Rebuilding must not raise; it falls back to a real client, which
+    # fails open when Redis is absent in the test environment.
+    granted, _, _ = await lim.try_acquire()
+    assert granted is True
+
+
+async def test_shutdown_is_safe_to_call_twice():
+    from app.services import rate_limit
+
+    await rate_limit.shutdown()
+    await rate_limit.shutdown()

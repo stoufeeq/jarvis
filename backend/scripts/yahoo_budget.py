@@ -190,6 +190,12 @@ async def main(holdings: int, watchlist: int) -> None:
     except Exception as exc:
         print(f"Live window unavailable: {exc}")
 
+    try:
+        from app.services.rate_limit import shutdown
+        await shutdown()
+    except Exception:
+        pass
+
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
