@@ -47,6 +47,39 @@ class TickerHealthService:
     # a 429 would look exactly like a bad symbol.
     CONCURRENCY = 4
 
+    # Mass-failure guard. If this share of a run fails, the cause is the
+    # provider — rate limiting, an outage, a DNS or egress problem — not
+    # the symbols. Companies do not delist in batches of seventy-five,
+    # and AAPL failing alongside MSFT and NVDA is proof of the opposite
+    # of what a per-ticker verdict would claim. On a run like that
+    # nothing is counted: no increments, no new flags.
+    #
+    # The number is high on purpose. A user whose watchlist is genuinely
+    # half typos should still get warned, so this must only trip on a
+    # failure rate no plausible set of real symbols produces.
+    OUTAGE_FAILURE_RATIO = 0.6
+
+    # Below this, the ratio is noise — three tickers where two fail is
+    # 67% and tells you nothing. Small sets fall through to the normal
+    # per-ticker path.
+    OUTAGE_MIN_SAMPLE = 8
+
+    # Substrings that identify throttling rather than a bad symbol. A
+    # rate-limited probe is never evidence about the ticker, so it is
+    # discounted whatever the overall failure rate.
+    RATE_LIMIT_MARKERS = (
+        "429", "too many requests", "rate limit", "ratelimit",
+        "timeout", "timed out", "connection", "temporarily unavailable",
+        "503", "502", "504", "curl", "ssl", "max retries",
+    )
+
+    @classmethod
+    def _is_transport_error(cls, err: str | None) -> bool:
+        if not err:
+            return False
+        low = err.lower()
+        return any(m in low for m in cls.RATE_LIMIT_MARKERS)
+
     def __init__(self, db: AsyncSession):
         self.db = db
 
@@ -126,6 +159,37 @@ class TickerHealthService:
 
         results = await asyncio.gather(*(_one(t) for t in tickers))
 
+        failures = [(t, e) for t, ok, e in results if not ok]
+        ratio = len(failures) / len(results)
+        outage = (
+            len(results) >= self.OUTAGE_MIN_SAMPLE
+            and ratio >= self.OUTAGE_FAILURE_RATIO
+        )
+        if outage:
+            # Record nothing. Incrementing here is how a provider outage
+            # turns into seventy-five "likely delisted" warnings, which
+            # is worse than no warning at all: it buries the one symbol
+            # that really is wrong and trains the user to ignore the
+            # banner. last_checked_at is left alone too, so the run reads
+            # as "did not happen" rather than "happened and was fine".
+            sample = ", ".join(t for t, _ in failures[:5])
+            log.error(
+                "Ticker health: %d/%d probes failed (%.0f%%) — treating as a "
+                "provider outage, not %d bad symbols. No health rows updated. "
+                "Sample: %s. First error: %s",
+                len(failures), len(results), ratio * 100, len(failures),
+                sample, failures[0][1] if failures else None,
+            )
+            return {
+                "checked": len(results),
+                "broken": 0,
+                "recovered": 0,
+                "skipped": len(results),
+                "outage": True,
+                "failure_ratio": round(ratio, 3),
+                "sample_error": failures[0][1] if failures else None,
+            }
+
         existing = {
             r.ticker: r
             for r in (await self.db.execute(
@@ -134,7 +198,7 @@ class TickerHealthService:
         }
 
         now = datetime.now(UTC)
-        broken = recovered = 0
+        broken = recovered = throttled = 0
 
         for ticker, ok, err in results:
             row = existing.get(ticker)
@@ -151,6 +215,13 @@ class TickerHealthService:
                 row.consecutive_failures = 0
                 row.last_ok_at = now
                 row.last_error = None
+            elif self._is_transport_error(err):
+                # A throttled or timed-out probe says nothing about the
+                # symbol. Record the error for diagnosis but leave the
+                # counter alone, so a trickle of 429s across many days
+                # can't accumulate into a false verdict.
+                throttled += 1
+                row.last_error = err
             else:
                 row.consecutive_failures += 1
                 row.last_error = err
@@ -163,7 +234,18 @@ class TickerHealthService:
                     )
 
         await self.db.flush()
-        return {"checked": len(tickers), "broken": broken, "recovered": recovered}
+        if throttled:
+            log.warning(
+                "Ticker health: %d probe(s) failed on transport errors and were "
+                "not counted against the symbol", throttled,
+            )
+        return {
+            "checked": len(tickers),
+            "broken": broken,
+            "recovered": recovered,
+            "throttled": throttled,
+            "outage": False,
+        }
 
     # ── Read side ─────────────────────────────────────────────────────
 

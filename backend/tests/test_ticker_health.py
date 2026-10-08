@@ -250,7 +250,12 @@ async def test_healthy_ticker_stays_healthy(db):
     with _probe({"AAPL": True}):
         result = await TickerHealthService(db).check_all()
 
-    assert result == {"checked": 1, "broken": 0, "recovered": 0}
+    # Subset, not equality: check_all also reports throttled/outage, and
+    # pinning the exact dict shape makes every added counter a failure.
+    assert result["checked"] == 1
+    assert result["broken"] == 0
+    assert result["recovered"] == 0
+    assert result["outage"] is False
     assert (await db.get(TickerHealth, "AAPL")).resolves is True
 
 
@@ -310,3 +315,196 @@ async def test_check_all_with_no_tickers_is_a_noop(db):
     assert await TickerHealthService(db).check_all() == {
         "checked": 0, "broken": 0, "recovered": 0,
     }
+
+
+# ── Provider outage vs bad symbols ────────────────────────────────────
+#
+# The failure these guard against actually shipped: a provider problem
+# flagged 75 symbols as "likely delisted", AAPL, MSFT and NVDA among
+# them. A verdict that wrong is worse than silence — it buries the one
+# symbol that really is broken and teaches the user to ignore the banner.
+
+
+def _probe_err(results: dict[str, bool], error: str):
+    """Like _probe, but lets the test choose the failure message — the
+    error text is what separates a throttled probe from a dead symbol."""
+    def fake(ticker: str):
+        ok = results.get(ticker.upper(), True)
+        return (True, None) if ok else (False, error)
+
+    return patch.object(TickerHealthService, "_probe_sync", staticmethod(fake))
+
+
+async def _book(db, tickers: list[str]):
+    p = await _portfolio(db)
+    for t in tickers:
+        await _position(db, p, t)
+    return p
+
+
+REAL_NAMES = [
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO",
+    "ORCL", "CRM", "AMD", "INTC", "MU", "QCOM", "VOO",
+]
+
+
+@pytest.mark.asyncio
+async def test_total_provider_failure_flags_nothing(db):
+    """The reported bug: every probe fails, so every symbol is blamed."""
+    await _book(db, REAL_NAMES)
+
+    with _probe_err({t: False for t in REAL_NAMES}, "no price and no recent history"):
+        result = await TickerHealthService(db).check_all()
+
+    assert result["outage"] is True
+    assert result["broken"] == 0
+    assert result["skipped"] == len(REAL_NAMES)
+    assert await TickerHealthService(db).unresolvable_for_user(USER_ID) == []
+
+
+@pytest.mark.asyncio
+async def test_an_outage_run_writes_no_rows_at_all(db):
+    """Not even last_checked_at: the run must read as 'did not happen',
+    so a later real check isn't fooled into thinking it had a clean pass."""
+    from sqlalchemy import func, select as sa_select
+
+    await _book(db, REAL_NAMES)
+    with _probe_err({t: False for t in REAL_NAMES}, "429 Too Many Requests"):
+        await TickerHealthService(db).check_all()
+
+    count = await db.scalar(sa_select(func.count()).select_from(TickerHealth))
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_an_outage_does_not_increment_existing_counters(db):
+    """A ticker sitting at 2 failures must not be pushed over the line by
+    a run that proves nothing."""
+    await _book(db, REAL_NAMES)
+    await _health(db, "AAPL", resolves=True, consecutive_failures=2,
+                  last_ok_at=datetime.now(UTC) - timedelta(days=3))
+
+    with _probe_err({t: False for t in REAL_NAMES}, "no price and no recent history"):
+        await TickerHealthService(db).check_all()
+
+    row = await db.get(TickerHealth, "AAPL")
+    assert row.consecutive_failures == 2
+    assert row.resolves is True
+
+
+@pytest.mark.asyncio
+async def test_three_consecutive_outages_still_flag_nothing(db):
+    """Repetition must not launder an outage into a verdict."""
+    await _book(db, REAL_NAMES)
+    for _ in range(3):
+        with _probe_err({t: False for t in REAL_NAMES}, "429 Too Many Requests"):
+            await TickerHealthService(db).check_all()
+
+    assert await TickerHealthService(db).unresolvable_for_user(USER_ID) == []
+
+
+@pytest.mark.asyncio
+async def test_one_genuine_typo_among_healthy_names_still_flags(db):
+    """The guard must not buy robustness by going blind — this is the
+    case the banner exists for."""
+    await _book(db, REAL_NAMES + ["NOTATICKER"])
+    failing = {"NOTATICKER": False}
+
+    svc = TickerHealthService(db)
+    for _ in range(3):
+        with _probe_err(failing, "no price and no recent history"):
+            result = await svc.check_all()
+        assert result["outage"] is False
+
+    bad = await svc.unresolvable_for_user(USER_ID)
+    assert [b["ticker"] for b in bad] == ["NOTATICKER"]
+
+
+@pytest.mark.asyncio
+async def test_a_minority_of_failures_is_still_judged_per_ticker(db):
+    """Just under the ratio: normal path, flags land."""
+    await _book(db, REAL_NAMES)
+    # 7 of 15 = 47%, below the 60% threshold.
+    failing = {t: False for t in REAL_NAMES[:7]}
+
+    svc = TickerHealthService(db)
+    for _ in range(3):
+        with _probe_err(failing, "no price and no recent history"):
+            result = await svc.check_all()
+        assert result["outage"] is False
+
+    bad = {b["ticker"] for b in await svc.unresolvable_for_user(USER_ID)}
+    assert bad == set(REAL_NAMES[:7])
+
+
+@pytest.mark.asyncio
+async def test_a_small_set_is_never_treated_as_an_outage(db):
+    """Two of three failing is 67% but means nothing — a short watchlist
+    of mostly-wrong symbols must still get warned about."""
+    await _book(db, ["GOOD", "BAD1", "BAD2"])
+    failing = {"BAD1": False, "BAD2": False}
+
+    svc = TickerHealthService(db)
+    for _ in range(3):
+        with _probe_err(failing, "no price and no recent history"):
+            result = await svc.check_all()
+        assert result["outage"] is False
+
+    bad = {b["ticker"] for b in await svc.unresolvable_for_user(USER_ID)}
+    assert bad == {"BAD1", "BAD2"}
+
+
+# ── Transport errors are not evidence about a symbol ──────────────────
+
+
+@pytest.mark.asyncio
+async def test_rate_limited_probe_does_not_count_against_the_ticker(db):
+    """A trickle of 429s spread over days must not accumulate into a
+    verdict, even when the overall failure rate stays low."""
+    await _book(db, REAL_NAMES)
+    failing = {"AAPL": False}
+
+    svc = TickerHealthService(db)
+    for _ in range(5):
+        with _probe_err(failing, "YFRateLimitError: 429 Too Many Requests"):
+            result = await svc.check_all()
+        assert result["throttled"] == 1
+
+    row = await db.get(TickerHealth, "AAPL")
+    assert row.consecutive_failures == 0
+    assert row.resolves is True
+    assert "429" in row.last_error, "error is still recorded for diagnosis"
+
+
+@pytest.mark.parametrize("err", [
+    "YFRateLimitError: 429 Too Many Requests",
+    "ReadTimeout: timed out",
+    "ConnectionError: Max retries exceeded",
+    "SSLError: certificate verify failed",
+    "HTTPError: 503 Service Temporarily Unavailable",
+])
+def test_transport_errors_recognised(err):
+    assert TickerHealthService._is_transport_error(err) is True
+
+
+@pytest.mark.parametrize("err", [
+    "no price and no recent history",
+    None,
+    "",
+])
+def test_genuine_emptiness_is_not_a_transport_error(err):
+    assert TickerHealthService._is_transport_error(err) is False
+
+
+@pytest.mark.asyncio
+async def test_empty_response_still_flags_after_three_runs(db):
+    """The one error that IS evidence about the symbol keeps working."""
+    await _book(db, REAL_NAMES + ["DEADCO"])
+
+    svc = TickerHealthService(db)
+    for _ in range(3):
+        with _probe_err({"DEADCO": False}, "no price and no recent history"):
+            await svc.check_all()
+
+    bad = [b["ticker"] for b in await svc.unresolvable_for_user(USER_ID)]
+    assert bad == ["DEADCO"]
