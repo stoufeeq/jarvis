@@ -513,3 +513,142 @@ async def test_empty_response_still_flags_after_three_runs(db):
 
     bad = [b["ticker"] for b in await svc.unresolvable_for_user(USER_ID)]
     assert bad == ["DEADCO"]
+
+
+# ── Crypto goes to the provider that serves it ────────────────────────
+#
+# BTC and ETH sat in the warning banner permanently. Yahoo spells them
+# BTC-USD, so every Yahoo probe failed. The first fix skipped crypto
+# entirely, which was worse: a symbol that is never probed is never
+# marked healthy either, so a stale false flag became permanent rather
+# than merely recurring. These pin the actual fix.
+
+
+def _crypto_probe(priced: dict[str, bool]):
+    """Stub CoinGecko's batched quote call."""
+    async def fake(tickers):
+        return [
+            {"ticker": t.upper(), "price": 100.0 if priced.get(t.upper(), True) else None}
+            for t in tickers
+        ]
+
+    return patch(
+        "app.services.crypto_market_data.CryptoMarketDataService.get_quotes",
+        staticmethod(fake),
+    )
+
+
+@pytest.mark.asyncio
+async def test_crypto_is_probed_and_marked_healthy(db):
+    """The regression: BTC must come back resolved, not skipped."""
+    p = await _portfolio(db)
+    await _position(db, p, "BTC")
+    await _position(db, p, "ETH")
+
+    with _crypto_probe({}), _probe({}):
+        result = await TickerHealthService(db).check_all()
+
+    assert result["checked"] == 2
+    assert (await db.get(TickerHealth, "BTC")).resolves is True
+    assert (await db.get(TickerHealth, "ETH")).resolves is True
+
+
+@pytest.mark.asyncio
+async def test_an_existing_crypto_false_flag_gets_cleared(db):
+    """Skipping crypto left these stuck forever — nothing could ever
+    reset a row that was never probed."""
+    p = await _portfolio(db)
+    await _position(db, p, "BTC")
+    await _health(db, "BTC", resolves=False, consecutive_failures=3,
+                  last_ok_at=datetime.now(UTC) - timedelta(days=3),
+                  last_error="YFRateLimitError: Too Many Requests")
+
+    with _crypto_probe({}), _probe({}):
+        result = await TickerHealthService(db).check_all()
+
+    assert result["recovered"] == 1
+    row = await db.get(TickerHealth, "BTC")
+    assert row.resolves is True
+    assert row.consecutive_failures == 0
+    assert await TickerHealthService(db).unresolvable_for_user(USER_ID) == []
+
+
+@pytest.mark.asyncio
+async def test_crypto_is_never_sent_to_the_yahoo_probe(db):
+    """Yahoo has no symbol "BTC"; sending it there is the original bug."""
+    p = await _portfolio(db)
+    await _position(db, p, "BTC")
+    await _position(db, p, "AAPL")
+    seen: list[list[str]] = []
+
+    async def spy(tickers):
+        seen.append(list(tickers))
+        return [(t, True, None) for t in tickers]
+
+    with _crypto_probe({}), patch.object(
+        TickerHealthService, "_probe_batch", staticmethod(spy)
+    ):
+        await TickerHealthService(db).check_all()
+
+    assert seen == [["AAPL"]], f"Yahoo probe received {seen}"
+
+
+@pytest.mark.asyncio
+async def test_a_genuinely_unpriced_crypto_symbol_still_flags(db):
+    """Probing the right provider must not mean never warning."""
+    p = await _portfolio(db)
+    await _position(db, p, "BTC")
+    await _position(db, p, "DOGE")
+
+    svc = TickerHealthService(db)
+    for _ in range(3):
+        with _crypto_probe({"DOGE": False}), _probe({}):
+            await svc.check_all()
+
+    bad = [b["ticker"] for b in await svc.unresolvable_for_user(USER_ID)]
+    assert bad == ["DOGE"]
+
+
+@pytest.mark.asyncio
+async def test_coingecko_being_down_is_not_evidence_about_the_symbols(db):
+    """Only two crypto symbols, so the outage ratio can't apply — the
+    transport-error discount has to carry this case."""
+    p = await _portfolio(db)
+    await _position(db, p, "BTC")
+    await _position(db, p, "ETH")
+
+    async def boom(_tickers):
+        raise ConnectionError("coingecko unreachable")
+
+    svc = TickerHealthService(db)
+    for _ in range(4):
+        with patch(
+            "app.services.crypto_market_data.CryptoMarketDataService.get_quotes",
+            staticmethod(boom),
+        ), _probe({}):
+            await svc.check_all()
+
+    assert (await db.get(TickerHealth, "BTC")).consecutive_failures == 0
+    assert await svc.unresolvable_for_user(USER_ID) == []
+
+
+@pytest.mark.asyncio
+async def test_a_yahoo_outage_does_not_suppress_crypto_verdicts(db):
+    """Guarded per provider: pooling them would let one healthy provider
+    dilute the other's failure rate, or one outage blank both."""
+    p = await _portfolio(db)
+    for t in REAL_NAMES:
+        await _position(db, p, t)
+    await _position(db, p, "BTC")
+
+    with _crypto_probe({}), _probe_err(
+        {t: False for t in REAL_NAMES}, "429 Too Many Requests"
+    ):
+        result = await TickerHealthService(db).check_all()
+
+    assert result["outage"] is True
+    assert result["outage_providers"] == ["Yahoo"]
+    # Crypto was still judged on its own merits.
+    assert (await db.get(TickerHealth, "BTC")).resolves is True
+    # And no equity row was written.
+    assert await db.get(TickerHealth, "AAPL") is None

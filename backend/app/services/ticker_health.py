@@ -184,6 +184,49 @@ class TickerHealthService:
                 out.append((t, False, "not returned by the provider's quote endpoint"))
         return out
 
+    @staticmethod
+    async def _probe_crypto(tickers: list[str]) -> list[tuple[str, bool, str | None]]:
+        """Probe crypto symbols against CoinGecko, which is what actually
+        serves them.
+
+        They were previously probed against Yahoo, where "BTC" does not
+        exist — Yahoo spells it BTC-USD — so BTC and ETH failed every
+        single check and sat permanently in the warning banner.
+
+        The first fix was to skip crypto entirely, which was worse: a
+        symbol that is never probed is never marked healthy either, so
+        the stale false flag became permanent instead of merely
+        recurring. Probing the right provider is the only version that
+        both avoids the false positive and still catches a genuinely bad
+        crypto symbol.
+        """
+        from app.services.crypto_market_data import CryptoMarketDataService
+
+        try:
+            quotes = await CryptoMarketDataService.get_quotes(tickers)
+        except Exception as exc:
+            # One batched call, so a failure is the provider, not the
+            # symbols. Phrased to match the transport markers so it is
+            # discounted even when the set is too small for the outage
+            # ratio to apply.
+            err = f"CoinGecko connection failed: {type(exc).__name__}: {exc}"[:400]
+            return [(t, False, err) for t in tickers]
+
+        priced = {
+            str(q.get("ticker", "")).upper()
+            for q in quotes
+            if q.get("price") is not None
+        }
+        if not priced and tickers:
+            err = "CoinGecko returned nothing (temporarily unavailable)"
+            return [(t, False, err) for t in tickers]
+
+        return [
+            (t, t.upper() in priced,
+             None if t.upper() in priced else "not priced by CoinGecko")
+            for t in tickers
+        ]
+
     async def check_all(self, user_id: int | None = None) -> dict:
         """Probe every tracked ticker and update its health row.
 
@@ -192,62 +235,64 @@ class TickerHealthService:
         FAILURE_THRESHOLD is the ticker marked as not resolving.
         """
         tracked = await self.tracked_tickers(user_id)
-
-        # Crypto resolves through CoinGecko, not Yahoo. Probing "BTC"
-        # against a Yahoo quote endpoint fails every time — Yahoo spells
-        # it BTC-USD — so including them produced permanent false
-        # positives. BTC and ETH were both in the 75-ticker false alarm.
-        # A broken crypto symbol needs its own probe against the provider
-        # that actually serves it; until that exists, silence beats a
-        # guaranteed-wrong verdict.
-        tickers = [t for t in tracked if not is_crypto(t)]
-        skipped_crypto = len(tracked) - len(tickers)
-        if skipped_crypto:
-            log.debug(
-                "Ticker health: skipped %d crypto symbol(s) — served by CoinGecko",
-                skipped_crypto,
-            )
-
-        if not tickers:
+        if not tracked:
             return {"checked": 0, "broken": 0, "recovered": 0, "outage": False}
 
-        results = await self._probe_batch(tickers)
+        # Each symbol is probed against the provider that serves it.
+        # Guarded separately too: a Yahoo throttle must not suppress
+        # verdicts about CoinGecko symbols, and vice versa. Pooling them
+        # would let one healthy provider dilute the other's failure rate
+        # below the outage threshold and flag its symbols as dead.
+        batches = [
+            ("Yahoo", [t for t in tracked if not is_crypto(t)], self._probe_batch),
+            ("CoinGecko", [t for t in tracked if is_crypto(t)], self._probe_crypto),
+        ]
 
-        failures = [(t, e) for t, ok, e in results if not ok]
-        ratio = len(failures) / len(results)
-        outage = (
-            len(results) >= self.OUTAGE_MIN_SAMPLE
-            and ratio >= self.OUTAGE_FAILURE_RATIO
-        )
-        if outage:
-            # Record nothing. Incrementing here is how a provider outage
-            # turns into seventy-five "likely delisted" warnings, which
-            # is worse than no warning at all: it buries the one symbol
-            # that really is wrong and trains the user to ignore the
-            # banner. last_checked_at is left alone too, so the run reads
-            # as "did not happen" rather than "happened and was fine".
-            sample = ", ".join(t for t, _ in failures[:5])
-            log.error(
-                "Ticker health: %d/%d probes failed (%.0f%%) — treating as a "
-                "provider outage, not %d bad symbols. No health rows updated. "
-                "Sample: %s. First error: %s",
-                len(failures), len(results), ratio * 100, len(failures),
-                sample, failures[0][1] if failures else None,
-            )
+        results: list[tuple[str, bool, str | None]] = []
+        outages: list[str] = []
+        skipped = 0
+        first_error: str | None = None
+
+        for name, group, probe in batches:
+            if not group:
+                continue
+            group_results = await probe(group)
+            group_failures = [(t, e) for t, ok, e in group_results if not ok]
+            group_ratio = len(group_failures) / len(group_results)
+            if (
+                len(group_results) >= self.OUTAGE_MIN_SAMPLE
+                and group_ratio >= self.OUTAGE_FAILURE_RATIO
+            ):
+                outages.append(name)
+                skipped += len(group_results)
+                if first_error is None and group_failures:
+                    first_error = group_failures[0][1]
+                log.error(
+                    "Ticker health: %d/%d %s probes failed (%.0f%%) — treating as a "
+                    "provider outage, not bad symbols. No health rows updated for "
+                    "this group. First error: %s",
+                    len(group_failures), len(group_results), name,
+                    group_ratio * 100, group_failures[0][1] if group_failures else None,
+                )
+                continue
+            results.extend(group_results)
+
+        if not results:
             return {
-                "checked": len(results),
+                "checked": 0,
                 "broken": 0,
                 "recovered": 0,
-                "skipped": len(results),
+                "skipped": skipped,
                 "outage": True,
-                "failure_ratio": round(ratio, 3),
-                "sample_error": failures[0][1] if failures else None,
+                "outage_providers": outages,
+                "sample_error": first_error,
             }
 
+        probed = [t for t, _, _ in results]
         existing = {
             r.ticker: r
             for r in (await self.db.execute(
-                select(TickerHealth).where(TickerHealth.ticker.in_(tickers))
+                select(TickerHealth).where(TickerHealth.ticker.in_(probed))
             )).scalars().all()
         }
 
@@ -288,17 +333,24 @@ class TickerHealthService:
                     )
 
         await self.db.flush()
+        if outages:
+            log.warning(
+                "Ticker health: skipped %d symbol(s) — %s unavailable",
+                skipped, " and ".join(outages),
+            )
         if throttled:
             log.warning(
                 "Ticker health: %d probe(s) failed on transport errors and were "
                 "not counted against the symbol", throttled,
             )
         return {
-            "checked": len(tickers),
+            "checked": len(results),
             "broken": broken,
             "recovered": recovered,
             "throttled": throttled,
-            "outage": False,
+            "skipped": skipped,
+            "outage": bool(outages),
+            "outage_providers": outages,
         }
 
     # ── Read side ─────────────────────────────────────────────────────
